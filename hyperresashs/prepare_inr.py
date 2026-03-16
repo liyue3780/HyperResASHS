@@ -6,7 +6,7 @@ from pathlib import Path
 import numpy as np
 import yaml
 from types import SimpleNamespace
-from utils.upsample_inr_method import create_link
+from .utils.upsample_inr_method import create_link
 from picsl_greedy import Greedy3D
 
 

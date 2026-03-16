@@ -1,0 +1,69 @@
+# This configuration tries to match the layout of the original ASHS as much as 
+# possible to minimize the changes needed for pipeline that work with ASHS
+# outputs
+
+# ======= INFERENCE FILENAMES =======
+
+# ------- input -------
+# input image names
+t1_native_img: "{prefix}mprage.nii.gz"
+t2_native_img: "{prefix}tse.nii.gz"
+
+# input template names
+template_img: "template.nii.gz"
+template_roi_img: "{side}_round_in_global_space_larger.nii.gz"
+
+# ------- postprocessing -------
+t1_neck_trim_img: "{prefix}mprage_necktrim.nii.gz"
+
+# ------- registration outputs -------
+
+# registration between modalities
+t1_to_t2_affine_mat: "{prefix}mprage_to_tse_global_affine.mat"
+t1_aligned_to_t2_img: "{prefix}mprage_aligned_to_tse.nii.gz"
+
+# Local registration between modalities
+t1_to_t2_local_affine_mat: "{prefix}mprage_to_tse_local_affine_{side}.mat"
+
+# registration between template and t1
+template_to_t1_affine_mat: "{prefix}template_to_mprage_affine.mat"
+template_to_t1_warped_img: "{prefix}template_to_mprage_warped.nii.gz"
+template_roi_to_t1_warped_img: "{prefix}template_roi_{side}_to_mprage_warped.nii.gz"
+
+# ------- hyper-resolution patches -------
+t2_hyperres_patch_img: "{prefix}tse_patch_hyperres_{side}.nii.gz"
+t1_hyperres_patch_img: "{prefix}mprage_warped_to_tse_patch_hyperres_{side}.nii.gz"
+
+# ------- nnUNet processing directories -------
+nnunet_input_dir: "nnunet/{dataset}/{side}/input"
+nnunet_output_dir: "nnunet/{dataset}/{side}/output"
+
+# ------- Final segmentation outputs -------
+final_hyperres_seg: "final/{prefix}tse_patch_hyperres_seg_{side}.nii.gz"
+final_native_seg: "final/{prefix}tse_native_seg_{side}.nii.gz"
+final_native_t1space_seg: "final/{prefix}mprage_native_seg_{side}.nii.gz"
+final_labelfile: "final/{prefix}itksnap_labels.txt"
+final_volumes_csv: "final/{prefix}hyperres_volumes.csv"
+
+# ------- QC images -------
+registration_qc: "qc/{prefix}registration_qc_{side}.png"
+segmentation_qc: "qc/{prefix}segmentation_qc_{side}.png"
+
+# ======= ADDITIONAL TRAINING FILENAMES =======
+
+# Ground truth segmentation for training INR model
+t2_native_gt_seg: "{prefix}manual_seg_native_{side}.nii.gz"
+
+# INR inputs in the preprocessing directory
+inr_input_t2_lr_img: "inr/input/{side}/tse_lr.nii.gz"
+inr_input_t2_lr_mask: "inr/input/{side}/tse_lr_mask.nii.gz"
+inr_input_t2_lr_seg: "inr/input/{side}/tse_lr_seg.nii.gz"
+inr_input_t2_gt_img: "inr/input/{side}/tse_gt.nii.gz"
+inr_input_t1_lr_img: "inr/input/{side}/mprage_lr.nii.gz"
+inr_input_t1_lr_mask: "inr/input/{side}/mprage_lr_mask.nii.gz"
+inr_input_t1_gt_img: "inr/input/{side}/mprage_gt.nii.gz"
+inr_input_inference_mask: "inr/input/{side}/inference_mask.nii.gz"
+
+# INR output - upsampled segmentation
+t2_hyperres_gt_seg: "{prefix}manual_seg_hyperres_{side}.nii.gz"
+

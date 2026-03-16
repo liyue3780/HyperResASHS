@@ -13,7 +13,48 @@ This project addresses the challenge of segmenting MTL subregions from anisotrop
 
 The pipeline handles the entire workflow from raw multi-modality MRI images to final segmentation results, including registration, ROI extraction, upsampling, and model inference.
 
-## Setup
+## Requirements
+* **NVidia GPU** is needed to run training and inference. It is possible to run inference on CPU but runtimes will be over an hour per case, vs. ~3 minutes on GPU.
+* A Python (version 3.10 or greater) environment with **conda** package manager and is recommended
+
+## Easy Setup (Most Users)
+
+Follow these steps to set up the repository in a fresh environment:
+
+### 1. Create a Conda Environment
+
+Create a new `conda` environment with Python 3.10 or higher:
+
+```bash
+conda create -n hyperresashs python=3.10
+conda activate hyperresashs
+```
+
+An alternative to using conda is to create a Python virtual environment
+
+```bash
+cd /my/project/path
+python -v env .venv
+source .venv/bin/activate
+```
+
+### 2. Install hyperresashs from PyPi
+
+Install the package and all dependencies
+
+```bash
+pip install hyperresashs
+```
+
+Check that the install was successful
+
+```bash
+hrashs check
+```
+
+The command should report that HyperResASHS was successfully installed and print the software version. If you see errors/warnings related to PyTorch and CUDA, please follow more detailed instructions for installing PyTorch under *Advanced Setup* below.
+
+## Advanced Setup (Developers)
 
 Follow these steps to set up the repository in a fresh environment:
 
@@ -31,7 +72,7 @@ conda activate hyperresashs
 Clone the repository with submodules:
 
 ```bash
-git clone --recursive https://github.com/liyue3780/HyperResASHS.git
+git clone --recursive https://github.com/pyushkevich/HyperResASHS.git
 cd HyperResASHS
 ```
 
@@ -45,211 +86,190 @@ git submodule update --init --recursive
 
 **Important**: PyTorch version compatibility is critical. This pipeline requires PyTorch 2.5.x (tested with 2.5.1). Newer versions (e.g., 2.9) may cause compatibility issues.
 
+For optimal performance, you should install PyTorch library optimized for your CUDA version. To check your CUDA version, type
+
 ```bash
-# First, install PyTorch with CUDA support (adjust CUDA version as needed)
+nvidia-smi | grep "CUDA Version"
+```
+
+The output will be like this. If you get an error, then CUDA is probably not configured on your machine.
+```
+| NVIDIA-SMI 535.288.01             Driver Version: 535.288.01   CUDA Version: 12.2     |
+```
+
+Then enter the following command, with `cu118` changed to match your cuda version (e.g., `cu122`):
+
+```bash
 # For CUDA 11.8:
 pip install torch==2.5.1 torchvision==0.20.1 torchaudio==2.5.1 --index-url https://download.pytorch.org/whl/cu118
+```
 
-# For CPU only:
-# pip install torch==2.5.1 torchvision==0.20.1 torchaudio==2.5.1
+Then install the package and remaining dependencies:
 
+```bash
 # Then install the package and remaining dependencies
 pip install -e .
 ```
 
-**Note**: Additional dependencies may be required by the submodules. See the submodule setup instructions below.
-
-### 4. Set Up Submodules
-
-This repository uses git submodules for dependencies:
-
-- **`submodules/multi_contrast_inr`**: INR repository (tracking `main` branch)
-- **`submodules/nnUNet`**: Modified nnUNet repository (tracking `mmseg` branch) - [https://github.com/liyue3780/nnUNet/tree/mmseg](https://github.com/liyue3780/nnUNet/tree/mmseg)
-
-**Install nnUNet submodule:**
-
-```bash
-cd submodules/nnUNet
-pip install -e .
-cd ../..
-```
-
-**Set nnU-Net Environment Variables:**
-
-After installing nnUNet, you must set the following environment variables:
-
-```bash
-export nnUNet_raw="/path/to/nnUNet_raw"
-export nnUNet_preprocessed="/path/to/nnUNet_preprocessed"
-export nnUNet_results="/path/to/nnUNet_results"
-```
-
-For detailed setup instructions (including Linux, MacOS, and Windows), see the [nnU-Net environment variables documentation](https://github.com/MIC-DKFZ/nnUNet/blob/master/documentation/set_environment_variables.md).
-
-**Install INR submodule dependencies:**
-
-```bash
-pip install tensorboard==2.20.0 lpips==0.1.4
-```
-
-Refer to the INR repository's documentation for specific installation requirements. The INR submodule may require additional dependencies such as PyTorch, nibabel, and other packages.
-
-**Note**: The modified nnUNet includes Modality Augmentation methods for multi-modality brain MRI segmentation. Make sure to use the `mmseg` branch when running nnU-Net training.
-
 ### 6. Verify Installation
 
-Verify that the main pipeline can be imported:
+Verify that the package and dependencies are installed correctly:
 
 ```bash
-python -c "from preprocessing import PreprocessorInVivo; from testing import ModelTester; from prepare_inr import INRPreprocess; print('Installation successful!')"
+hrashs check
 ```
 
-## Configuration
+## Basic Usage
 
-For detailed configuration information, including config file format and cross-validation file format, see [Configuration Guide](docs/configuration.md).
+HyperResASHS provides a command-line interface for running segmentation on new subjects using pre-trained models.
 
-## Pipeline Details
+### 1. List Available Models
 
-The pipeline consists of six main steps that can be run in linear order. Each step assumes the previous steps have been completed:
-
-1. **Prepare** → 2. **Prepare INR** → 3. **Run INR Upsampling** → 4. **Preprocess** → 5. **Train** → 6. **Test**
-
-**Note**: Steps 2-3 are only needed if using INR upsampling. For other upsampling methods (e.g., `GreedyUpsampling` or `None`), you can skip Steps 2-3 and go directly from Step 1 to Step 4.
-
-### Step 1: Prepare Patch Data (`stage = prepare`)
-
-Run this step first to create the experiment folder by copying images and segmentations from the two atlas folders (T1w and T2w ASHS atlases). This step:
-- Copies primary and secondary modality images from ASHS packages
-- Copies segmentation files
-- Performs coordinate system transformations (swapdim RPI)
-- Creates the folder structure in `{PREPARE_RAW_PATH}/{EXP_NUM}{MODEL_NAME}/images/`
-
-**Usage:**
-```bash
-python main.py -s prepare -c {CONFIG_ID}
-```
-
-### Step 2: Prepare INR Data (`stage = prepare_inr`)
-
-This step prepares the data for INR upsampling. It requires the prepared patch data from Step 1. The `prepare_inr` stage will:
-- Prepare the data in the format expected by the INR submodule
-- Generate INR configuration files for each case
-- Create a shell script `shell/run_inr_upsampling_{EXP_NUM}{MODEL_NAME}.sh` with paths automatically filled from your config
-
-**Usage:**
-```bash
-python main.py -s prepare_inr -c {CONFIG_ID}
-```
-
-**Folder structure created:**
-
-The `prepare_inr` stage creates the following folder structure under `{INR_PATH}/{EXP_NUM}{MODEL_NAME}/`:
-- `preprocess/`: Contains case folders with input data and config files for INR
-- `training_preparation/`: Contains case folders with prepared data ready for INR training
-- `training_output/`: Will contain INR training outputs (created after INR training completes)
-
-### Step 3: Run INR Upsampling (`stage = run_inr`)
-
-After preparing INR data, you have two options to run INR upsampling:
-
-#### Option 1: Run via Python (Recommended for single GPU)
-
-Run INR upsampling directly using Python:
+View all pre-trained models available for download:
 
 ```bash
-python main.py -s run_inr -c {CONFIG_ID}
+hrashs list
 ```
 
-This will process all cases sequentially. The script automatically:
-- Finds all cases in the `training_preparation` folder (created in Step 2)
-- Runs INR training for each case using the generated config files from the `preprocess` folder
+This displays model IDs, names, and brief descriptions of each available model.
 
-#### Option 2: Run via Shell Script (Recommended for multi-GPU)
+### 2. View Model Details
 
-For multi-GPU setups, you can use the generated shell script and modify it to run different batches on different GPUs. See [INR Upsampling Shell Script Guide](docs/inr_upsampling_shell_script.md) for detailed instructions.
-
-### Step 4: Complete Preprocessing (`stage = preprocess`)
-
-After INR upsampling is finished, run the preprocessing stage to complete all remaining steps. This step assumes the patch data preparation (Step 1) was already completed. It will:
-- Copy INR upsampled results (if using INR upsampling method)
-- Perform resampling/upsampling based on the configured method
-- Register secondary modality (T1w) to primary (T2w)
-- Prepare nnU-Net dataset
-- Remove outer segmentation artifacts
-- Convert labels to continuous format
-- Create cross-validation splits
-- Run nnU-Net experiment planning
-- Generate nnU-Net training script: `shell/train_nnunet_{EXP_NUM}{MODEL_NAME}.sh`
-
-**Usage:**
-```bash
-python main.py -s preprocess -c {CONFIG_ID}
-```
-
-**Outputs from Step 4:**
-- nnU-Net dataset in `{NNUNET_RAW_PATH}/Dataset{EXP_NUM}_{MODEL_NAME}/`
-- Preprocessed data in `{NNUNET_RAW_PATH}/../nnUNet_preprocessed/Dataset{EXP_NUM}_{MODEL_NAME}/`
-- Cross-validation splits file: `splits_final.json`
-- Training script: `shell/train_nnunet_{EXP_NUM}{MODEL_NAME}.sh`
-
-**Note**: If you're using a non-INR upsampling method (e.g., `GreedyUpsampling` or `None`), you can skip Steps 2-3 and go directly from Step 1 to Step 4.
-
-### Step 5: nnU-Net Training (`stage = train`)
-
-Step 4 creates the nnU-Net dataset, runs experiment planning, and creates five-fold cross-validation splits. A training script is automatically generated for convenience.
-
-You have two options to run nnU-Net training:
-
-#### Option 1: Run via Python (Recommended)
-
-Run nnU-Net training directly using Python:
+Get detailed information about a specific model including required inputs and expected outputs:
 
 ```bash
-python main.py -s train -c {CONFIG_ID}
+hrashs desc <model_id>
 ```
 
-This will train all 5 folds (fold 0-4) sequentially using the `TRAINER` specified in your configuration file (e.g., `ModAugUNetTrainer`).
-
-**Note**: Ensure you're using the modified nnUNet from `submodules/nnUNet` (mmseg branch) which includes Modality Augmentation methods. The `nnUNetv2_train` command should be available after installing the modified nnUNet.
-
-#### Option 2: Run via Shell Script
-
-Alternatively, you can run the generated training script manually. See [nnU-Net Training Shell Script Guide](docs/nnunet_training_shell_script.md) for detailed instructions.
-
-### Step 6: Testing (`stage = test`)
-
-Testing is independent from Steps 1-5 and uses its own configuration files in the `config_test/` directory. Each test configuration has its own ID that links to a trained model.
-
-**Test Configuration ID Convention:**
-- The test config ID links to the training model ID. For example:
-  - `2921` links to model `292` (the `1` represents the first test set)
-  - `2922`, `2923`, `2924`, etc. can be used for different test sets of the same model
-- The first digits match the `EXP_NUM` of the trained model you want to use
-
-**Usage:**
+Example:
 ```bash
-python main.py -s test -c {TEST_CONFIG_ID}
-# For example: python main.py -s test -c 2921
+hrashs desc HSG_Body_Atlas
 ```
 
-**Configuration Requirements:**
-- `EXP_NUM`: Must match the training model's `EXP_NUM` (e.g., `292`)
-- `MODEL_NAME`: Must match the training model's `MODEL_NAME` (e.g., `TestPipeline`)
-- `TRAINER`: Must match the training model's `TRAINER`
-- `CONDITION`: Must match the training model's `CONDITION` (e.g., `in_vivo`)
-- `UPSAMPLING_METHOD`: Must match the training model's `UPSAMPLING_METHOD`
-- `TEST_PATH`: Path to test data (see [Configuration Guide](docs/configuration.md) for structure)
-- `TEMPLATE_PATH`: Path to ASHS template for MTL ROI cropping (downloadable from [DOI: 10.5061/dryad.k6djh9wmn](https://doi.org/10.5061/dryad.k6djh9wmn))
+### 3. Run Segmentation
 
-**This stage performs:**
-- Whole-brain registration (T1w to T2w)
-- ROI extraction using ASHS template
-- Patch cropping and upsampling
-- Local registration for fine alignment
-- nnU-Net inference for segmentation
-- Output of segmentation results
+Run segmentation on your subject data:
 
-For detailed test configuration information, see [Configuration Guide](docs/configuration.md).
+```bash
+hrashs run -a <model_id> -g <t1_image> -f <t2_image> -w <workdir>
+```
+
+**Required arguments:**
+- `-a, --atlas`: Model ID or path to atlas config file
+- `-g, --t1`: Path to T1-weighted (MPRAGE) image
+- `-f, --t2`: Path to T2-weighted (TSE) image  
+- `-w, --workdir`: Output directory for results
+
+**Optional arguments:**
+- `-I, --subject`: Subject ID, which will be prefixed to all output filenames
+- `-t, --threads`: Number of parallel threads for registration, etc. [default: 1]
+- `--device`: Device for computation ("cuda" or "cpu") [default: auto]
+- `-N, --no-overwrite`: Do not overwrite existing results
+- `-L, --no-links`: Copy files instead of creating symlinks
+- `-T, --tidy`: Reduce intermediate files
+- `-k, --disable-ssl-verification`: Disable SSL verification for Hugging Face
+
+**Example:**
+```bash
+hrashs run -a HSG_Body_Atlas -g mprage.nii.gz -f tse.nii.gz -I sub01 -w ./output -t 4
+```
+
+**Outputs:** Segmentation results are saved in the `final` subfolder of the output directory. Two types of images are generated:
+* `[subject]_tse_patch_hyperres_seg_[side].nii.gz`: These are HyperResASHS segmentations with nearly isotropic resolution (e.g., 0.4x0.4x0.4mm^3). We recommend using these images for volumetry, thickness computation, running CRASHS, etc. 
+* `[subject]_tse_native_seg_[side].nii.gz`: These segmentations have been downsampled to original T2-MRI space. They can be used for visualization or computing similarity metrics with manual segmentations. However, these segmentations suffer from step edge artifacts when the T2-MRI is anisotropic.
+* `[subject]_hyperres_volumes.csv`: A CSV file with subfield volumes (computed from hyper-resolution segmentations).
+
+**QC Images:** Registration and segmentation QC images in .png format are placed in the `qc` subfolder of the output directory. 
+
+## Training
+
+Train a custom HyperResASHS model on your own dataset:
+
+```bash
+hrashs train -c <config> -m <manifest> -l <labels> -w <workdir>
+```
+
+**Required arguments:**
+- `-c, --config`: Path to training configuration YAML file (see format below)
+- `-m, --manifest`: Path to manifest CSV describing the training data
+- `-l, --labels`: Path to ITK-SNAP label description file
+- `-w, --workdir`: Output directory for training artifacts
+
+**Optional arguments:**
+- `-x, --xval`: Cross-validation fold file (if not provided, random 5-fold split is used)
+- `-s, --stage`: Run specific stage(s): `1` (preprocess), `2` (INR), `3` (nnU-Net prep), `4` (nnU-Net train), or ranges like `1-3`
+- `-F, --filter`: Regex to filter subjects/folds (stage-dependent)
+- `-R, --inr-random-seed`: Random seed for INR optimization
+- `--inr-batch-size`: INR batch size [default: 2000]
+- `--inr-epochs`: INR training epochs [default: 60]
+- `-t, --threads`, `--device`, `-N`, `-L`, `-T`, `-k`: Same as `run` command
+
+**Example:**
+```bash
+hrashs train -c atlas.yaml -m manifest.csv -l labels.txt -w ./training -s 1-2 -t 8
+```
+
+### Configuration File Format (`-c`)
+
+YAML file with atlas metadata and training parameters.
+
+```yaml
+metadata:
+  id: 'MyAtlas'
+  name: 'My Custom Atlas'
+  version: '1.0.0'
+config:
+  EXP_NUM: 401                    # Unique experiment number
+  MODEL_NAME: 'IsotropicSeg'      # Model name
+  TRAINER: 'ModAugUNetTrainer'    # nnU-Net trainer class
+  CONDITION: 'in_vivo'            # Condition identifier
+  UPSAMPLING_METHOD: 'INRUpsampling'
+```
+
+### Manifest File Format (`-m`)
+
+CSV file listing training cases. Paths can be absolute or relative to the manifest file:
+
+```csv
+id,date,mprage,tse,seg_left,seg_right
+subj01,2024-01-15,subj01/mprage.nii.gz,subj01/tse.nii.gz,subj01/seg_left.nii.gz,subj01/seg_right.nii.gz
+subj02,,subj02/mprage.nii.gz,subj02/tse.nii.gz,subj02/seg_left.nii.gz,subj02/seg_right.nii.gz
+```
+
+Required columns: `id`, `mprage`, `tse`, `seg_left`, `seg_right`. The `date` column is optional.
+
+### Label File Format (`-l`)
+
+ITK-SNAP label description file format:
+
+```
+# IDX   -R-  -G-  -B-  -A--  VIS MSH  LABEL
+   0     0    0    0    0    0   0    "Clear Label"
+   1   255    0    0    1    1   1    "CA1"
+   2     0  255    0    1    1   1    "CA2"
+```
+
+### Cross-Validation File Format (`-x`)
+
+Optional text file where each line lists subject IDs for one held-out fold (space-separated):
+
+```
+subj01 subj02 subj03
+subj04 subj05 subj06
+subj07 subj08 subj09
+```
+
+### Output Structure
+
+```
+workdir/
+├── preproc/           # Preprocessed images per subject
+├── inr_training/      # INR training data and outputs
+├── nnunet_training/   # nnU-Net datasets and trained models
+└── final/             # Final trained atlas ready for deployment
+```
+
+For detailed configuration information, see [Configuration Guide](docs/configuration.md).
 
 ## Citation
 

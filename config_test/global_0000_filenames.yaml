@@ -1,8 +1,8 @@
 # ------- input -------
 # input image names
-t1_whole_img_before_registeration: "t1_img.nii.gz"
+t1_native_img: "t1_img.nii.gz"
 t1_whole_img: "t1_img_registered_to_t2_world_coordinate.nii.gz"
-t2_whole_img: "t2_img.nii.gz"
+t2_native_img: "t2_img.nii.gz"
 t2_padded_img: "t2_padded_img.nii.gz"
 
 # input template names

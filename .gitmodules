@@ -1,8 +1,8 @@
 [submodule "submodules/multi_contrast_inr"]
-	path = submodules/multi_contrast_inr
-	url = https://github.com/liyue3780/multi_contrast_inr.git
+	path = hyperresashs/submodules/multi_contrast_inr
+	url = https://github.com/pyushkevich/multi_contrast_inr.git
 	branch = main
 [submodule "submodules/nnUNet"]
-	path = submodules/nnUNet
-	url = https://github.com/liyue3780/nnUNet.git
+	path = hyperresashs/submodules/nnUNet
+	url = https://github.com/pyushkevich/nnUNet_modaug.git
 	branch = mmseg

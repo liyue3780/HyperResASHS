@@ -1,10 +1,10 @@
 import os
 import shutil
 from os.path import join
-from utils.upsample_inr_method import copy_inr_upsample_seg, copy_inr_linear_image, create_link, correct_shift
-from utils.upsample_greedy_method import greedy_upsample_segmentation
-from utils.upsample_linear_method import linear_isotropic_upsampling
-from utils.tool import flip_image, save_label_mapping_to_txt, make_nnunet_dataset_json, convert_each_ground_truth_file_as_continuous
+from .utils.upsample_inr_method import copy_inr_upsample_seg, copy_inr_linear_image, create_link, correct_shift
+from .utils.upsample_greedy_method import greedy_upsample_segmentation
+from .utils.upsample_linear_method import linear_isotropic_upsampling
+from .utils.tool import flip_image, save_label_mapping_to_txt, make_nnunet_dataset_json, convert_each_ground_truth_file_as_continuous
 import SimpleITK as sitk
 from batchgenerators.utilities.file_and_folder_operations import save_json, load_json
 import numpy as np
@@ -213,6 +213,8 @@ class PreprocessorBase():
 
         # --- step 2: generate the plan ---
         plans_identifier = plan_experiments([int(self.config['EXP_NUM'])], 'ExperimentPlanner', 8, self.config['NNUNET_PREPROSSOR'], None, None)
+        if plans_identifier is None:
+            raise ValueError('Planning failed, no plans identifier returned. Please check the previous steps for errors.')
 
         # --- step 3: run preprocess ---
         default_np = {"2d": 8, "3d_fullres": 4, "3d_lowres": 8}

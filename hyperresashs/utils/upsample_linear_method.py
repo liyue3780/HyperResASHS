@@ -1,5 +1,5 @@
 import SimpleITK as sitk
-from utils.tool import linear_resample_to_spacing_using_itkimage
+from .tool import linear_resample_to_spacing_using_itkimage
 import numpy as np
 
 
@@ -17,8 +17,7 @@ def linear_isotropic_upsampling(t2_path, t1_path, t2_output_path, t1_output_path
     sitk.WriteImage(t1_upsampled_image, t1_output_path)
 
 
-def pad_image_with_world_alignment(image_path, output_path, pad_lower, pad_upper):
-    image = sitk.ReadImage(image_path)
+def pad_image_with_world_alignment_in_memory(image, pad_lower, pad_upper):
     spacing = np.array(image.GetSpacing())
     origin = np.array(image.GetOrigin())
     direction = np.array(image.GetDirection()).reshape(3, 3)
@@ -35,4 +34,10 @@ def pad_image_with_world_alignment(image_path, output_path, pad_lower, pad_upper
     padded.SetOrigin(tuple(new_origin))
     padded.SetDirection(image.GetDirection())
 
+    return padded
+
+
+def pad_image_with_world_alignment(image_path, output_path, pad_lower, pad_upper):
+    image = sitk.ReadImage(image_path)
+    padded = pad_image_with_world_alignment_in_memory(image, pad_lower, pad_upper)
     sitk.WriteImage(padded, output_path)

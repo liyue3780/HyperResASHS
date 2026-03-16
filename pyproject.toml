@@ -1,0 +1,85 @@
+[project]
+name="hyperresashs"
+version="1.0.5"
+requires-python = ">=3.10"
+description="Isotropic segmentation pipeline for MTL subregions from multi-modality 3T MRI"
+readme="README.md"
+license = { file = "LICENSE" }
+authors = [
+    { name = "Yue Li" },
+    { name = "Paul Yushkevich", email = "pyushkevich@gmail.com" },
+    { name = "PATCHLab, University of Pennsylvania" }
+]
+classifiers=[
+    "Development Status :: 4 - Beta",
+    "Intended Audience :: Developers",
+    "Intended Audience :: Science/Research",
+    "Intended Audience :: Healthcare Industry",
+    "Programming Language :: Python :: 3",
+    "License :: OSI Approved :: Apache Software License",
+    "Topic :: Scientific/Engineering :: Artificial Intelligence",
+    "Topic :: Scientific/Engineering :: Image Recognition",
+    "Topic :: Scientific/Engineering :: Medical Science Apps.",
+    "Operating System :: OS Independent",
+]
+keywords = [
+    'deep learning',
+    'image segmentation',
+    'medical image analysis',
+    'medical image segmentation',
+    'MTL subregions',
+    'hippocampus segmentation',
+    'nnU-Net',
+    'hyperresashs',
+    'ASHS',
+    'Automatic Segmentation of Hippocampal Subfields'
+]
+dependencies = [
+    "torch==2.5.1",
+    "torchvision==0.20.1",
+    "torchaudio==2.5.1",
+    "acvl-utils>=0.2",
+    "dynamic-network-architectures>=0.4",
+    "tqdm",
+    "dicom2nifti",
+    "scipy",
+    "batchgenerators>=0.25",
+    "numpy",
+    "scikit-learn",
+    "scikit-image>=0.19.3",
+    "SimpleITK>=2.2.1",
+    "pandas",
+    "graphviz",
+    'tifffile',
+    'requests',
+    "nibabel",
+    "matplotlib",
+    "seaborn",
+    "imagecodecs",
+    "yacs",
+    "PyYAML>=6.0.3",
+    "huggingface_hub>=0.20.0",
+    "picsl_greedy>=0.0.11",
+    "picsl_c3d>=1.4.6.0",
+    "tensorboard==2.20.0",
+    "lpips==0.1.4"
+]
+
+[project.urls]
+repository = "https://github.com/liyue3780/HyperResASHS"
+homepage = "https://github.com/liyue3780/HyperResASHS"
+
+[build-system]
+requires = ["setuptools"]
+build-backend = "setuptools.build_meta"
+
+[project.scripts]
+hrashs = "hyperresashs.ashs_cli:main"
+
+[tool.setuptools]
+packages = { find = { } }
+
+[tool.setuptools.package-data]
+hyperresashs = [
+    "config_templates/*.yaml"
+]

@@ -14,7 +14,7 @@ DATASET:
 
 TRAINING:
   SEED: 12
-  BATCH_SIZE: 1000
+  BATCH_SIZE: 2000
   LR: 0.0004
   EPOCHS: 60  # Will be overridden in make_config() but kept as default
   OPTIM: Adam

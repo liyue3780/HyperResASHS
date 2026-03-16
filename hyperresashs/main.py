@@ -2,27 +2,28 @@ import yaml
 import argparse
 from pathlib import Path
 import os
-from preprocessing import *
-from testing import *
-from prepare_inr import INRPreprocess
+from .preprocessing import *
+from .ashs_inference import *
+from .prepare_inr import INRPreprocess
 
-
-def search_config_name(config_id):
-    curr_path = Path.cwd()
-    searched_file = None
+def search_config_name(config_id, config_root = None) -> str:
+    config_root = Path.cwd() if config_root is None else config_root
 
     for folder_name in ['config', 'config_test']:
-        config_path = os.path.join(curr_path, folder_name)
+        config_path = os.path.join(config_root, folder_name)
         if not os.path.exists(config_path):
             continue
 
         file_list = os.listdir(config_path)
         for file_ in file_list:
-            if int(file_.split('_')[1]) == config_id:
-                return os.path.join(config_path, file_)
+            try:
+                test_id = int(file_.split('_')[1])
+                if test_id == config_id:
+                    return os.path.join(config_path, file_)
+            except:
+                continue
 
-    if searched_file == None:
-        raise ValueError('There is no config file with id {}'.format(config_id))
+    raise ValueError('There is no config file with id {}'.format(config_id))
 
 
 def extract_id_from_filename(filename):
@@ -132,39 +133,44 @@ def validate_config_file(config_file, stage='prepare'):
     
     # 3. check if nnunet dataset exists
     check_nnunet_dataset_exists(exp_num, nnunet_raw_path)
+    
 
-
-if __name__ == '__main__':
-    print('')
-
-    parser = argparse.ArgumentParser()
-    parser.add_argument('-c','--config_id', default='392', help='configure id (integer) or path to config file')
-    parser.add_argument('-s','--stage', default='prepare', type=str, help='Set pipeline stage')
-    parser.add_argument('--subject_id', type=str, default=None, help='optional: test only this specific subject id (only used when stage is test)')
-    args = parser.parse_args()
-
+def load_config(config_id, stage, config_path=None):
+    
     # determine if config_id is a path or an id
     config_file = None
-    if os.path.exists(args.config_id):
-        config_file = args.config_id
+    if os.path.exists(config_id):
+        config_file = config_id
         if not os.path.isfile(config_file):
             raise ValueError(f'config path is not a file: {config_file}')
-        validate_config_file(config_file, args.stage)
+        validate_config_file(config_file, stage)
     else:
         try:
-            config_id = int(args.config_id)
-            config_file = search_config_name(config_id)
+            config_id = int(config_id)
+            config_file = search_config_name(config_id, config_path)
         except ValueError:
-            raise ValueError(f'invalid config_id: {args.config_id}. it should be an integer id or a valid file path.')
+            raise ValueError(f'invalid config_id: {config_id}. it should be an integer id or a valid file path.')
 
     config = yaml.safe_load(open(config_file, 'r'))
     
     # set default FILE_NAME_CONFIG based on stage
     if 'FILE_NAME_CONFIG' not in config:
-        if args.stage == 'test':
-            config['FILE_NAME_CONFIG'] = 'config_test/global_0000_filenames.yaml'
-        else:
-            config['FILE_NAME_CONFIG'] = 'config/global_000_finenames.yaml'
+        config['FILE_NAME_CONFIG'] = os.path.join(os.path.dirname(config_file), 'global_0000_filenames.yaml') 
+    
+    return config
+
+def main():
+    print('')
+
+    parser = argparse.ArgumentParser()
+    parser.add_argument('-C','--config_path', help='Set the path to the folder with configuration files')
+    parser.add_argument('-c','--config_id', required=True, help='configure id (integer) or path to config file')
+    parser.add_argument('-s','--stage', required=True, type=str, help='Set pipeline stage')
+    parser.add_argument('--subject_id', type=str, default=None, help='optional: test only this specific subject id (only used when stage is test)')
+    args = parser.parse_args()
+
+    # Load the config
+    config = load_config(args.config_id, args.stage, args.config_path)
 
     if args.stage == 'prepare':
         preparer = PreprocessorInVivo(config)
@@ -187,8 +193,11 @@ if __name__ == '__main__':
         preparer.run_nnunet_training()
     
     if args.stage == 'test':
-        tester = ModelTester(config)
+        tester = HyperASHSInference(config)
         if args.subject_id:
             tester.execute(subject_id=args.subject_id)
         else:
             tester.execute()
+
+if __name__ == '__main__':
+    main()

@@ -27,6 +27,7 @@ def create_link(source_path, target_path):
         else:
             os.remove(target_path)
     link_target = os.path.realpath(source_path) if os.path.islink(source_path) else source_path
+    os.makedirs(os.path.dirname(target_path), exist_ok=True)
     os.symlink(link_target, target_path)
 
 
