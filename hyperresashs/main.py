@@ -5,6 +5,7 @@ import os
 from .preprocessing import *
 from .ashs_inference import *
 from .prepare_inr import INRPreprocess
+from .testing import TwoStageTester
 
 def search_config_name(config_id, config_root = None) -> str:
     config_root = Path.cwd() if config_root is None else config_root
@@ -131,8 +132,8 @@ def validate_config_file(config_file, stage='prepare'):
     # 2. check if id exists in existing config files
     check_id_in_existing_configs(filename_id, config_file)
     
-    # 3. check if nnunet dataset exists
-    check_nnunet_dataset_exists(exp_num, nnunet_raw_path)
+    # # 3. check if nnunet dataset exists
+    # check_nnunet_dataset_exists(exp_num, nnunet_raw_path)
     
 
 def load_config(config_id, stage, config_path=None):
@@ -167,14 +168,19 @@ def main():
     parser.add_argument('-c','--config_id', required=True, help='configure id (integer) or path to config file')
     parser.add_argument('-s','--stage', required=True, type=str, help='Set pipeline stage')
     parser.add_argument('--subject_id', type=str, default=None, help='optional: test only this specific subject id (only used when stage is test)')
+    parser.add_argument('--img_env', type=str, default="in_vivo", help='options: in_vivo or ex_vivo')
+    parser.add_argument('--auxiliary', type=int, help='the exp id for the auxiliary channels')
     args = parser.parse_args()
 
-    # Load the config
+    # load the config
     config = load_config(args.config_id, args.stage, args.config_path)
-
     if args.stage == 'prepare':
-        preparer = PreprocessorInVivo(config)
-        preparer.prepare_patch_data_from_ashs_package()
+        if args.img_env == 'in_vivo':
+            preparer = PreprocessorInVivo(config)
+            preparer.prepare_patch_data_from_ashs_package()
+        elif args.img_env == 'ex_vivo':
+            preparer = PreprocessorExVivo(config)
+            preparer.prepare_patch_data_from_exvivo_input()
 
     if args.stage == 'prepare_inr':
         inr_executor = INRPreprocess(config)
@@ -185,19 +191,44 @@ def main():
         inr_executor.run_inr_upsampling()
 
     if args.stage == 'preprocess':
-        preparer = PreprocessorInVivo(config)
-        preparer.execute()
+        if args.img_env == 'in_vivo':
+            preparer = PreprocessorInVivo(config)
+            preparer.execute()
+        elif args.img_env == 'ex_vivo':
+            preparer = PreprocessorExVivo(config)
+            preparer.execute()
     
-    if args.stage == 'train':
-        preparer = PreprocessorInVivo(config)
-        preparer.run_nnunet_training()
-    
-    if args.stage == 'test':
-        tester = HyperASHSInference(config)
-        if args.subject_id:
-            tester.execute(subject_id=args.subject_id)
+    if args.stage == 'nnunet_plan_exvivo' and args.img_env == 'ex_vivo':
+        planner = PreprocessorExVivo(config)
+        if args.auxiliary is None:
+            # stage 1
+            planner.execute_nnunet_plan()
         else:
-            tester.execute()
+            # stage 2
+            planner.create_auxillary_channels(args.auxiliary)
+            planner.execute_nnunet_plan()
+
+    if args.stage == 'train':
+        if args.img_env == 'in_vivo':
+            preparer = PreprocessorInVivo(config)
+            preparer.run_nnunet_training()
+        elif args.img_env == 'ex_vivo':
+            preparer = PreprocessorExVivo(config)
+            preparer.run_nnunet_training()
+        
+    if args.stage == 'test':
+        if args.img_env == 'in_vivo':
+            tester = HyperASHSInference(config)
+            if args.subject_id:
+                tester.execute(subject_id=args.subject_id)
+            else:
+                tester.execute()
+        elif args.img_env == 'ex_vivo' and args.auxiliary is not None:
+            tester = TwoStageTester(config, args.auxiliary)
+            if args.subject_id:
+                tester.execute(subject_id=args.subject_id)
+            else:
+                tester.execute()
 
 if __name__ == '__main__':
     main()

@@ -12,6 +12,7 @@ import torch
 import time
 import shutil
 import tempfile
+import SimpleITK as sitk
 
 
 class ModelTester():
@@ -229,15 +230,11 @@ class ModelTester():
             t2_local_patch = join(case_path, self.nm.trim_roi_in_3tt2_XYZ.replace('XYZ', side_))
             c3d = Convert3D()
             c3d.execute(f'{t2_padded_img} {t1_roi} -reslice-identity -trim 5vox {t2_padded_img} -reslice-identity -o {t2_local_patch}')
-
-    def run_inference_for_one_case(self, case_path):
-        # create the folder for hyper-resolution inference
-        hyper_test_path = join(case_path, self.test_folder)
-        os.makedirs(hyper_test_path, exist_ok=True)
-
+    
+    def process_global_img(self, case_path):
         if self.check_roi_existence(case_path) == 0:
             # ------- global registration (from T1 to T2) new added pipeline -------
-            t2_whole_img = join(case_path, self.nm.t2_whole_img)
+            t2_whole_img = join(case_path, self.nm.t2_native_img)
             t1_whole_img_before_registration = join(case_path, self.nm.t1_native_img)
 
             save_mat_path_t2_to_t1_global = join(case_path, 'global_matrix_3tt2_to_3tt1.mat')
@@ -254,6 +251,14 @@ class ModelTester():
             t2_padded_img = join(case_path, self.nm.t2_padded_img)
             pad_image_with_world_alignment(t2_whole_img, t2_padded_img, [40, 40, 40], [40, 40, 40])
             self.cropping(case_path)
+
+    def run_inference_for_one_case(self, case_path):
+        # create the folder for hyper-resolution inference
+        hyper_test_path = join(case_path, self.test_folder)
+        os.makedirs(hyper_test_path, exist_ok=True)
+
+        # process global image
+        self.process_global_img(case_path)
 
         # iterate through the sides
         side_list = ['left', 'right']
@@ -306,89 +311,90 @@ class ModelTester():
             # command
             print(f'start running inference for {side_path}')
             nnunt_output_path = join(side_path, 'output')
+            run_nnunet_using_python(nnunet_input_folder, nnunt_output_path, int(self.config['EXP_NUM']), self.config['MODEL_NAME'], self.config['TRAINER'])
 
-            # nnUNet prediction
-            from nnunetv2.inference.predict_from_raw_data import nnUNetPredictor
-            from batchgenerators.utilities.file_and_folder_operations import load_json
-            from nnunetv2.utilities.plans_handling.plans_handler import PlansManager
-            from nnunetv2.training.nnUNetTrainer.nnUNetTrainer import nnUNetTrainer
-            from nnunetv2.utilities.label_handling.label_handling import determine_num_input_channels
+            # # nnUNet prediction
+            # from nnunetv2.inference.predict_from_raw_data import nnUNetPredictor
+            # from batchgenerators.utilities.file_and_folder_operations import load_json
+            # from nnunetv2.utilities.plans_handling.plans_handler import PlansManager
+            # from nnunetv2.training.nnUNetTrainer.nnUNetTrainer import nnUNetTrainer
+            # from nnunetv2.utilities.label_handling.label_handling import determine_num_input_channels
 
-            device = torch.device('cuda') if torch.cuda.is_available() else torch.device('cpu')
-            predictor = nnUNetPredictor(verbose=True, device=device)
-            nnunet_model = join(os.environ.get("nnUNet_results"), f"Dataset{self.config['EXP_NUM']}_{self.config['MODEL_NAME']}", f"{self.config['TRAINER']}__nnUNetPlans__3d_fullres")
+            # device = torch.device('cuda') if torch.cuda.is_available() else torch.device('cpu')
+            # predictor = nnUNetPredictor(verbose=True, device=device)
+            # nnunet_model = join(os.environ.get("nnUNet_results"), f"Dataset{self.config['EXP_NUM']}_{self.config['MODEL_NAME']}", f"{self.config['TRAINER']}__nnUNetPlans__3d_fullres")
             
-            dataset_json_path = join(nnunet_model, 'dataset.json')
-            plans_json_path = join(nnunet_model, 'plans.json')
-            model_complete = (os.path.exists(dataset_json_path) and 
-                            os.path.exists(plans_json_path))
+            # dataset_json_path = join(nnunet_model, 'dataset.json')
+            # plans_json_path = join(nnunet_model, 'plans.json')
+            # model_complete = (os.path.exists(dataset_json_path) and 
+            #                 os.path.exists(plans_json_path))
             
-            if model_complete:
-                fold_folders = [item for item in os.listdir(nnunet_model) 
-                               if item.startswith('fold_') and os.path.isdir(join(nnunet_model, item))]
-                if fold_folders:
-                    for fold_folder in fold_folders:
-                        checkpoint_path = join(nnunet_model, fold_folder, 'checkpoint_final.pth')
-                        if not os.path.exists(checkpoint_path):
-                            model_complete = False
-                            break
-                else:
-                    model_complete = False
+            # if model_complete:
+            #     fold_folders = [item for item in os.listdir(nnunet_model) 
+            #                    if item.startswith('fold_') and os.path.isdir(join(nnunet_model, item))]
+            #     if fold_folders:
+            #         for fold_folder in fold_folders:
+            #             checkpoint_path = join(nnunet_model, fold_folder, 'checkpoint_final.pth')
+            #             if not os.path.exists(checkpoint_path):
+            #                 model_complete = False
+            #                 break
+            #     else:
+            #         model_complete = False
             
-            if not model_complete:
-                hf_repo_id = self.config.get('HF_MODEL_REPO')
-                if hf_repo_id:
-                    print(f"Model not found or incomplete at {nnunet_model}, downloading from Hugging Face...")
-                    self.download_model_from_huggingface(hf_repo_id, nnunet_model)
-                else:
-                    raise FileNotFoundError(
-                        f"Model not found or incomplete at {nnunet_model} and HF_MODEL_REPO not specified in config. "
-                        f"Please either:\n"
-                        f"  1. Place the trained model at the expected path, or\n"
-                        f"  2. Add HF_MODEL_REPO to your config file to enable automatic download from Hugging Face."
-                    )
+            # if not model_complete:
+            #     hf_repo_id = self.config.get('HF_MODEL_REPO')
+            #     if hf_repo_id:
+            #         print(f"Model not found or incomplete at {nnunet_model}, downloading from Hugging Face...")
+            #         self.download_model_from_huggingface(hf_repo_id, nnunet_model)
+            #     else:
+            #         raise FileNotFoundError(
+            #             f"Model not found or incomplete at {nnunet_model} and HF_MODEL_REPO not specified in config. "
+            #             f"Please either:\n"
+            #             f"  1. Place the trained model at the expected path, or\n"
+            #             f"  2. Add HF_MODEL_REPO to your config file to enable automatic download from Hugging Face."
+            #         )
             
-            use_folds = predictor.auto_detect_available_folds(nnunet_model, 'checkpoint_final.pth')
-            dataset_json = load_json(join(nnunet_model, 'dataset.json'))
-            plans = load_json(join(nnunet_model, 'plans.json'))
-            plans_manager = PlansManager(plans)
+            # use_folds = predictor.auto_detect_available_folds(nnunet_model, 'checkpoint_final.pth')
+            # dataset_json = load_json(join(nnunet_model, 'dataset.json'))
+            # plans = load_json(join(nnunet_model, 'plans.json'))
+            # plans_manager = PlansManager(plans)
 
-            parameters = []
-            for i, f in enumerate(use_folds):
-                f = int(f) if f != 'all' else f
-                checkpoint = torch.load(join(nnunet_model, f'fold_{f}', 'checkpoint_final.pth'),
-                                        map_location=torch.device('cpu'))
-                if i == 0:
-                    configuration_name = checkpoint['init_args']['configuration']
-                    inference_allowed_mirroring_axes = checkpoint['inference_allowed_mirroring_axes'] if \
-                        'inference_allowed_mirroring_axes' in checkpoint.keys() else None
+            # parameters = []
+            # for i, f in enumerate(use_folds):
+            #     f = int(f) if f != 'all' else f
+            #     checkpoint = torch.load(join(nnunet_model, f'fold_{f}', 'checkpoint_final.pth'),
+            #                             map_location=torch.device('cpu'))
+            #     if i == 0:
+            #         configuration_name = checkpoint['init_args']['configuration']
+            #         inference_allowed_mirroring_axes = checkpoint['inference_allowed_mirroring_axes'] if \
+            #             'inference_allowed_mirroring_axes' in checkpoint.keys() else None
 
-                parameters.append(checkpoint['network_weights'])
+            #     parameters.append(checkpoint['network_weights'])
 
-            configuration_manager = plans_manager.get_configuration(configuration_name)
+            # configuration_manager = plans_manager.get_configuration(configuration_name)
 
-            # restore network
-            num_input_channels = determine_num_input_channels(plans_manager, configuration_manager, dataset_json)
-            network = nnUNetTrainer.build_network_architecture(
-                configuration_manager.network_arch_class_name,
-                configuration_manager.network_arch_init_kwargs,
-                configuration_manager.network_arch_init_kwargs_req_import,
-                num_input_channels,
-                plans_manager.get_label_manager(dataset_json).num_segmentation_heads,
-                enable_deep_supervision=False
-            )
+            # # restore network
+            # num_input_channels = determine_num_input_channels(plans_manager, configuration_manager, dataset_json)
+            # network = nnUNetTrainer.build_network_architecture(
+            #     configuration_manager.network_arch_class_name,
+            #     configuration_manager.network_arch_init_kwargs,
+            #     configuration_manager.network_arch_init_kwargs_req_import,
+            #     num_input_channels,
+            #     plans_manager.get_label_manager(dataset_json).num_segmentation_heads,
+            #     enable_deep_supervision=False
+            # )
 
-            predictor.manual_initialization(
-                network, plans_manager, configuration_manager, parameters,
-                dataset_json, self.config['TRAINER'],
-                inference_allowed_mirroring_axes)
+            # predictor.manual_initialization(
+            #     network, plans_manager, configuration_manager, parameters,
+            #     dataset_json, self.config['TRAINER'],
+            #     inference_allowed_mirroring_axes)
 
-            # predictor.initialize_from_trained_model_folder(nnunet_model, None)
-            predictor.predict_from_files(
-                nnunet_input_folder,
-                nnunt_output_path,
-                save_probabilities=False,
-                overwrite=True, num_processes_preprocessing=1, num_processes_segmentation_export=1)
+            # # predictor.initialize_from_trained_model_folder(nnunet_model, None)
+            # predictor.predict_from_files(
+            #     nnunet_input_folder,
+            #     nnunt_output_path,
+            #     save_probabilities=False,
+            #     overwrite=True, num_processes_preprocessing=1, num_processes_segmentation_export=1)
 
             end = time.time()  # end counting the time
             elapsed_time = end - start
@@ -398,3 +404,168 @@ class ModelTester():
     def execute(self, subject_id=None):
         # --- run inference
         self.resample_test_with_date(subject_id=subject_id)
+
+
+class TwoStageTester(ModelTester):
+    def __init__(self, config, first_stage_id):
+        super().__init__(config)
+
+        self.stage_1_id = int(first_stage_id)
+        self.nnunet_trained_model = os.environ.get('nnUNet_results')
+        self.stage_1_modelname = None
+        self.stage_1_trainer = None
+        for ele_ in os.listdir(self.nnunet_trained_model):
+            if 'Dataset' + str(first_stage_id) in ele_:
+                self.stage_1_modelname = ele_.split('_')[1]
+                self.stage_1_trainer = os.listdir(join(self.nnunet_trained_model, ele_))[0].split('_')[0]
+        self.test_folder = f"Dataset{config['EXP_NUM']}_TwoStage{self.stage_1_modelname}And{config['MODEL_NAME']}"
+
+    def twostage_test_with_date(self, subject_id=None):
+        subject_list = os.listdir(self.test_path)
+        if subject_id:
+            if subject_id not in subject_list:
+                raise ValueError(f'subject_id {subject_id} not found in test path {self.test_path}')
+            subject_list = [subject_id]
+        
+        for subject_ in subject_list:
+            subject_path = join(self.test_path, subject_)
+            date_list = os.listdir(subject_path)
+
+            for date_ in date_list:
+                date_path = join(subject_path, date_)
+                self.run_two_stage_inference_for_one_case(date_path)
+    
+    def run_two_stage_inference_for_one_case(self, case_path):
+        # create the folder for hyper-resolution inference
+        hyper_test_path = join(case_path, self.test_folder)
+        os.makedirs(hyper_test_path, exist_ok=True)
+
+        # process the global image if there is no ROI patches
+        self.process_global_img(case_path)
+
+        # iterate through the sides
+        side_list = ['left', 'right']
+        for side_ in side_list:
+            side_path = join(hyper_test_path, side_)
+            os.makedirs(side_path, exist_ok=True)
+
+            # ------- resampling -------
+            primary_file = join(case_path, self.nm.trim_roi_in_3tt2_XYZ.replace('XYZ', side_))
+            secondary_file = join(case_path, self.nm.trim_roi_in_3tt1_XYZ.replace('XYZ', side_))
+
+            # image path in resmapling workspace
+            primary_target = join(side_path, self.nm.primary)
+            secondary_target = join(side_path, self.nm.secondary)
+            c3d = Convert3D()
+            c3d.execute(f'{primary_file} -swapdim RPI -o {primary_target}')
+
+            c3d = Convert3D()
+            c3d.execute(f'{secondary_file} -swapdim RPI -o {secondary_target}')
+            primary_upsampled = join(side_path, self.nm.hyper_primary)
+            secondary_upsampled = join(side_path, self.nm.hyper_secondary)
+            
+            if self.upsampling_method == 'INRUpsampling' or self.upsampling_method == 'GreedyUpsampling':
+                linear_isotropic_upsampling(primary_target, secondary_target, primary_upsampled, secondary_upsampled)
+
+            elif self.upsampling_method == 'None':
+                create_link(primary_target, primary_upsampled)
+                create_link(secondary_target, secondary_upsampled)
+
+            # ------- registration -------
+            target_file = join(side_path, self.nm.hyper_primary)
+            moving_file = join(side_path, self.nm.hyper_secondary)
+            save_mat_path = os.path.join(side_path, self.nm.reg_mat)
+            output_file_path = os.path.join(side_path, self.nm.hyper_secondary_after_registertion)
+
+            g = Greedy3D()
+            g.execute(f"-d 3  -threads 24 -a -m NMI -i {target_file} {moving_file} -dof 6 -o {save_mat_path} -ia-identity -n 100x50")
+
+            g = Greedy3D()
+            g.execute(f'-d 3  -threads 24 -rf {target_file} -rm {moving_file} {output_file_path} -r {save_mat_path}')
+
+            # ------- nnunet input -------
+            # prepare stage 1
+            input_stage_1 = join(side_path, 'stage_1_input')
+            os.makedirs(input_stage_1, exist_ok=True)
+            create_link(target_file, join(input_stage_1, 'MTL_000_0000.nii.gz'))
+            create_link(output_file_path, join(input_stage_1, 'MTL_000_0001.nii.gz'))
+
+            # run stage 1
+            output_stage_1 = join(side_path, 'stage_1_output')
+            run_nnunet_using_python(input_stage_1, output_stage_1, self.stage_1_id, self.stage_1_modelname, self.stage_1_trainer)
+
+            # prepare stage 2
+            input_stage_2 = join(side_path, "stage_2_input")
+            os.makedirs(input_stage_2, exist_ok=True)
+            create_link(target_file, join(input_stage_2, 'MTL_000_0000.nii.gz'))
+            create_link(output_file_path, join(input_stage_2, 'MTL_000_0001.nii.gz'))
+
+            pred_itk = sitk.ReadImage(join(output_stage_1, "MTL_000.nii.gz"))
+            pred_array = sitk.GetArrayFromImage(pred_itk)
+            for ii in range(1, 12):
+                curr_label_mask = (pred_array == ii) + 0
+                mask_itk = sitk.GetImageFromArray(curr_label_mask)
+                mask_itk.CopyInformation(pred_itk)
+                curr_file_save_path = join(input_stage_2, "MTL_000_%04.0d" % int(ii+1) + ".nii.gz")
+                sitk.WriteImage(mask_itk, curr_file_save_path)
+            
+            # run stage 2
+            output_stage_2 = join(side_path, 'stage_2_output')
+            run_nnunet_using_python(input_stage_2, output_stage_2, int(self.config["EXP_NUM"]), self.config["MODEL_NAME"], self.config["TRAINER"])
+
+    def execute(self, subject_id=None):
+        # --- run inference
+        self.twostage_test_with_date(subject_id=subject_id)
+
+
+def run_nnunet_using_python(nnunet_input_folder, nnunt_output_path, exp_id, model_name, trainer):
+    from nnunetv2.inference.predict_from_raw_data import nnUNetPredictor
+    from batchgenerators.utilities.file_and_folder_operations import load_json
+    from nnunetv2.utilities.plans_handling.plans_handler import PlansManager
+    from nnunetv2.training.nnUNetTrainer.nnUNetTrainer import nnUNetTrainer
+    from nnunetv2.utilities.label_handling.label_handling import determine_num_input_channels
+    import torch
+
+    device = torch.device('cuda') if torch.cuda.is_available() else torch.device('cpu')
+    predictor = nnUNetPredictor(verbose=True, device=device)
+    nnunet_model = join(os.environ.get("nnUNet_results"), f"Dataset{exp_id}_{model_name}", f"{trainer}__nnUNetPlans__3d_fullres")
+    use_folds = predictor.auto_detect_available_folds(nnunet_model, 'checkpoint_final.pth')
+    dataset_json = load_json(join(nnunet_model, 'dataset.json'))
+    plans = load_json(join(nnunet_model, 'plans.json'))
+    plans_manager = PlansManager(plans)
+
+    parameters = []
+    for i, f in enumerate(use_folds):
+        f = int(f) if f != 'all' else f
+        checkpoint = torch.load(join(nnunet_model, f'fold_{f}', 'checkpoint_final.pth'),
+                                map_location=torch.device('cpu'))
+        if i == 0:
+            configuration_name = checkpoint['init_args']['configuration']
+            inference_allowed_mirroring_axes = checkpoint['inference_allowed_mirroring_axes'] if \
+                'inference_allowed_mirroring_axes' in checkpoint.keys() else None
+
+        parameters.append(checkpoint['network_weights'])
+
+    configuration_manager = plans_manager.get_configuration(configuration_name)
+
+    # restore network
+    num_input_channels = determine_num_input_channels(plans_manager, configuration_manager, dataset_json)
+    network = nnUNetTrainer.build_network_architecture(
+        configuration_manager.network_arch_class_name,
+        configuration_manager.network_arch_init_kwargs,
+        configuration_manager.network_arch_init_kwargs_req_import,
+        num_input_channels,
+        plans_manager.get_label_manager(dataset_json).num_segmentation_heads,
+        enable_deep_supervision=False
+    )
+
+    predictor.manual_initialization(
+        network, plans_manager, configuration_manager, parameters,
+        dataset_json, trainer,
+        inference_allowed_mirroring_axes)
+
+    predictor.predict_from_files(
+        nnunet_input_folder,
+        nnunt_output_path,
+        save_probabilities=False,
+        overwrite=True, num_processes_preprocessing=1, num_processes_segmentation_export=1)

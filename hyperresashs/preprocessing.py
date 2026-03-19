@@ -338,3 +338,194 @@ class PreprocessorInVivo(PreprocessorBase):
         self.nnunet_plan()
         self.create_nnunet_training_script()
 
+
+class PreprocessorExVivo(PreprocessorBase):
+    def __init__(self, config):
+        super().__init__(config)
+        self.whole_brain_path = config['WHOLE_BRAIN_PATH']
+        self.label_path = config['LABEL_PATH']
+        self.roi_path = config['CROP_ROI_PATH']
+    
+    def prepare_patch_data_from_exvivo_input(self):
+        case_list = os.listdir(self.roi_path)
+        for case_ in case_list:
+            print(case_)
+            case_name = case_.strip('.nii.gz')
+            t2_global_path = join(self.whole_brain_path, f"{case_name}_iv_t2.nii.gz")
+            case_roi_path = join(self.roi_path, case_name)
+
+            # ------- t2 -------
+            case_path = join(self.preparation_image_folder, case_name)
+            os.makedirs(case_path, exist_ok=True)
+
+            target_primary_path = join(case_path, self.nm.primary)
+            c3d = Convert3D()
+            c3d.execute(f"{case_roi_path} {t2_global_path} -reslice-identity -o {target_primary_path}")
+
+            c3d = Convert3D()
+            c3d.execute(f'{target_primary_path} -swapdim RPI -o {target_primary_path}')
+
+            # ------- t1 -------
+            t1_global_path = join(self.whole_brain_path, f"{case_name}_iv_t1.nii.gz")
+            target_t1_roi = join(case_path, self.nm.secondary)
+            c3d = Convert3D()
+            c3d.execute(f"{t1_global_path} {case_roi_path} -reslice-identity {t1_global_path} -multiply -trim 5vox -o {target_t1_roi}")
+
+            c3d = Convert3D()
+            c3d.execute(f'{target_t1_roi} -swapdim RPI -o {target_t1_roi}')
+
+            # ------- seg -------
+            for file_ in os.listdir(self.label_path):
+                if case_[0:6] in file_:
+                    seg_file = join(self.label_path, file_)
+                    target_seg_path = join(case_path, self.nm.seg)
+                    
+                    # read original segmentation to get unique labels
+                    original_seg_itk = sitk.ReadImage(seg_file)
+                    original_seg_array = sitk.GetArrayFromImage(original_seg_itk)
+                    unique_labels = np.unique(original_seg_array)
+                    unique_labels = unique_labels[unique_labels > 0]  # exclude background (0)
+                    
+                    if len(unique_labels) == 0:
+                        # no labels found, create empty segmentation
+                        c3d = Convert3D()
+                        c3d.execute(f"{case_roi_path} {seg_file} -reslice-identity -o {target_seg_path}")
+                        c3d = Convert3D()
+                        c3d.execute(f'{target_seg_path} -swapdim RPI -o {target_seg_path}')
+                    else:
+                        # create temporary directory for binary masks
+                        temp_dir = join(case_path, 'temp_binary_masks')
+                        os.makedirs(temp_dir, exist_ok=True)
+                        
+                        # create one-hot binary masks and reslice each
+                        resliced_binary_masks = []
+                        label_mapping = {}  # maps index to original label value
+                        
+                        for idx, label_val in enumerate(unique_labels):
+                            # create binary mask for this label
+                            binary_mask = (original_seg_array == label_val).astype(np.uint8)
+                            binary_itk = sitk.GetImageFromArray(binary_mask)
+                            binary_itk.CopyInformation(original_seg_itk)
+                            
+                            # save temporary binary mask
+                            temp_binary_path = join(temp_dir, f'label_{idx}.nii.gz')
+                            sitk.WriteImage(binary_itk, temp_binary_path)
+                            
+                            # reslice binary mask to match ROI
+                            temp_resliced_path = join(temp_dir, f'label_{idx}_resliced.nii.gz')
+                            c3d = Convert3D()
+                            c3d.execute(f"{case_roi_path} {temp_binary_path} -reslice-identity -o {temp_resliced_path}")
+                            
+                            # read resliced binary mask
+                            resliced_binary_itk = sitk.ReadImage(temp_resliced_path)
+                            resliced_binary_array = sitk.GetArrayFromImage(resliced_binary_itk)
+                            resliced_binary_masks.append(resliced_binary_array)
+                            label_mapping[idx] = label_val
+                        
+                        # stack binary masks and use argmax to recover labels
+                        stacked_masks = np.stack(resliced_binary_masks, axis=0)  # shape: (num_labels, H, W, D)
+                        label_indices = np.argmax(stacked_masks, axis=0)  # shape: (H, W, D)
+                        
+                        # map indices back to original label values
+                        label_map_array = np.zeros_like(label_indices, dtype=np.uint8)
+                        for idx, label_val in label_mapping.items():
+                            label_map_array[label_indices == idx] = label_val
+                        
+                        # handle background: if no mask has value > 0.5, it's background
+                        max_values = np.max(stacked_masks, axis=0)
+                        label_map_array[max_values < 0.5] = 0
+                        
+                        # create final segmentation image
+                        final_seg_itk = sitk.GetImageFromArray(label_map_array)
+                        final_seg_itk.CopyInformation(resliced_binary_itk)
+                        sitk.WriteImage(final_seg_itk, target_seg_path)
+                        
+                        # swap dimensions to RPI
+                        c3d = Convert3D()
+                        c3d.execute(f'{target_seg_path} -swapdim RPI -o {target_seg_path}')
+                        
+                        # clean up temporary files
+                        shutil.rmtree(temp_dir)
+
+    def sort_case_list(self, case_list):
+        case_list.sort(key=lambda x: int(x[0:6]))
+
+    def get_id_side(self, case_name):
+        case_id = case_name[0:6]
+        last_letter = case_name[-1]
+        if last_letter == "L":
+            side_ = 'left'
+        elif last_letter == 'R':
+            side_ = 'right'
+        return case_id, side_
+
+    def preprocess_labels(self):
+        continuous_correspondance = join(self.preparation_file_folder, 'continuous_correspondance.txt')
+        label_csv = self.config['SNAP_LABEL_PATH']
+        with open(label_csv, "r") as infile, open(continuous_correspondance, "w", newline='') as outfile:
+            reader = csv.reader(infile)
+            writer = csv.writer(outfile)
+            for row in reader:
+                selected = [row[0], row[1], row[3]]  # 1st, 2nd, 4th columns
+                writer.writerow(selected)
+        
+        make_nnunet_dataset_json(continuous_correspondance, self.nnunet_raw_date_path)  # generate dataset.json
+        convert_each_ground_truth_file_as_continuous(continuous_correspondance, self.nnunet_raw_date_path)  # change the label of files
+
+    def create_auxillary_channels(self, auxiliary_id):
+        # ------- make the auxiliary channels from big-label model -------
+        # set the path of big label gt
+        # search the nnunet id full name
+        nnunet_dataset_name = None
+        for ele_ in os.listdir(self.config['NNUNET_RAW_PATH']):
+            if 'Dataset' + str(auxiliary_id) in ele_:
+                nnunet_dataset_name = ele_
+        label_source = join(self.config['NNUNET_RAW_PATH'], nnunet_dataset_name, 'labelsTr')
+        print(label_source)
+
+        # set save path
+        save_path = os.path.join(self.nnunet_raw_date_path, 'imagesTr')
+        print(save_path)
+
+        # read channel num from dataset.json
+        auxiliary_dataset_json = join(self.config['NNUNET_RAW_PATH'], nnunet_dataset_name, 'dataset.json')
+        auxiliary_label_map = load_json(auxiliary_dataset_json)["labels"]
+        max_label_idx = np.array(list(auxiliary_label_map.values())).max()
+        max_channel_idx = max_label_idx + 1
+
+        # read gt files one by one and create the auxiliary channels for small label model
+        gt_list = os.listdir(label_source)
+        for gt_file in gt_list:
+            gt_file_path = join(label_source, gt_file)
+            gt_itk = sitk.ReadImage(gt_file_path)
+            gt_array = sitk.GetArrayFromImage(gt_itk)
+
+            # Use the big label (even big CA) as new channels
+            for ii in range(1, max_channel_idx):
+                curr_label_mask = (gt_array == ii) + 0
+                mask_itk = sitk.GetImageFromArray(curr_label_mask)
+                mask_itk.CopyInformation(gt_itk)
+                curr_file_save_path = join(save_path, gt_file.strip(".nii.gz") + "_%04.0d" % int(ii+1) + ".nii.gz")
+                sitk.WriteImage(mask_itk, curr_file_save_path)
+    
+        # ------- remake small-label model's dataset.json -------
+        main_dataset_json = join(self.nnunet_raw_date_path, 'dataset.json')
+        main_dataset_dict = load_json(main_dataset_json)
+        inverted_auxiliary_label_map = {value: key for key, value in auxiliary_label_map.items()}
+        for ii in range(2, max_channel_idx+1):
+            main_dataset_dict['channel_names'][str(ii)] = inverted_auxiliary_label_map[ii-1]
+        save_json(main_dataset_dict, main_dataset_json)
+
+    def execute(self):
+        self.resampling()
+        self.register_to_primary()
+        self.prepare_nnunet()
+        self.remove_outer_seg()
+        self.preprocess_labels()
+        self.process_cross_validation()
+    
+    def execute_nnunet_plan(self):
+        self.nnunet_plan()
+        self.create_nnunet_training_script()
+
+
