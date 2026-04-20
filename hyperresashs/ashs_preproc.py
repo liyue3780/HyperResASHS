@@ -413,7 +413,7 @@ class ASHSProcessor:
         return scaling_str
 
         
-    def preprocess(self, exp: ASHSExperimentBase, callback: ProgressCallbackType = default_progress_callback, progress_range=(0.0, 0.25)):
+    def preprocess(self, exp: ASHSExperimentBase, reg_t1t2_mat:str|None=None, callback: ProgressCallbackType = default_progress_callback, progress_range=(0.0, 0.25)):
         """
         Preprocess the T1 and T2 images for a given case, including neck trimming, registration, and ROI cropping.
         """
@@ -439,7 +439,7 @@ class ASHSProcessor:
                 
                 g = Greedy3D()
                 if not self.t1_only:
-
+                    
                     # If specified, crop the T2 image before registration      
                     t2_cropped_img = rescale_intensity_to_short(gpe.t2_whole_img.data)
                     if self.t2_cropping > 0:
@@ -450,15 +450,25 @@ class ASHSProcessor:
                         c3d.execute(f'-swapdim RSA -region {c}x{c}x0% {100-2*c}x{100-2*c}x100%')
                         t2_cropped_img = c3d.peek(-1)
                     
-                    # Perform the affine registration
-                    g.execute(f'-threads {nt} -z -a -dof 6 -ia-identity -m NMI '
-                            f'-i t2 t1 -n 100x100x10 -o {gpe.fn_save_mat_path_t2_to_t1_global} ', 
-                            t2=t2_cropped_img, t1=gpe.t1_neck_trim.data)
+                    if reg_t1t2_mat is None:
+                        # Perform the affine registration
+                        g.execute(f'-threads {nt} -z -a -dof 6 -ia-identity -m NMI '
+                                f'-i t2 t1 -n 100x100x10 -o {gpe.fn_save_mat_path_t2_to_t1_global} ', 
+                                t2=t2_cropped_img, t1=gpe.t1_neck_trim.data)
                     
-                    # Apply the registration 
-                    g.execute(f'-threads {nt} -rf t2 -rm t1 t1_reg_to_t2 '
-                            f'-r {gpe.fn_save_mat_path_t2_to_t1_global}', t1_reg_to_t2=None)
+                        # Apply the registration 
+                        g.execute(f'-threads {nt} -rf t2 -rm t1 t1_reg_to_t2 '
+                                f'-r {gpe.fn_save_mat_path_t2_to_t1_global}', t1_reg_to_t2=None)
                     
+                    else:                        
+                        user_matrix = np.eye(4) if reg_t1t2_mat == 'identity' else np.load(reg_t1t2_mat)
+                        np.savetxt(gpe.fn_save_mat_path_t2_to_t1_global, user_matrix, fmt='%.6f')
+                        
+                        # Apply the registration 
+                        g.execute(f'-threads {nt} -rf t2 -rm t1 t1_reg_to_t2 '
+                                f'-r {gpe.fn_save_mat_path_t2_to_t1_global}', 
+                                t2=t2_cropped_img, t1=gpe.t1_neck_trim.data, t1_reg_to_t2=None)
+  
                     if self.save_intermediates:
                         gpe.t1_reg_to_t2.data = g['t1_reg_to_t2']
                         
@@ -517,12 +527,12 @@ class ASHSProcessor:
                 if not self.t1_only:
                 
                     # Pad the T2 image with world alignment
-                    t2_padded_img = pad_image_with_world_alignment_in_memory(t2_cropped_img, [40, 40, 40], [40, 40, 40])
+                    t2_padded_img = pad_image_with_world_alignment_in_memory(gpe.t2_whole_img.data, [40, 40, 40], [40, 40, 40])
                     
                     for side_, lp in lpe.items():
                                                 
                         # Determine the target spacing for the T2 upsampling (replace the largest spacing with the second largest one)
-                        scaling_str = self.get_close_to_iso_integer_scaling(t2_cropped_img)
+                        scaling_str = self.get_close_to_iso_integer_scaling(gpe.t2_whole_img.data)
                                         
                         # Crop the T2 using the T1 ROI and apply the new spacing
                         c3d = Convert3D()
