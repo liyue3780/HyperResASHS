@@ -381,9 +381,12 @@ class ASHSProcessor:
         self.save_intermediates = save_intermediates
         self.create_links = create_links
         self.t1_only = t1_only
+        self.upsampling = config.get('UPSAMPLING_METHOD', 'None') != 'None'
+        self.target_spacing = self._read_target_spacing(config.get('TARGET_SPACING', 0.0))
         self.t1_only_fake_t2_spacing = config.get('T1_ONLY_FAKE_T2_SPACING', 0.4)
         self.t2_cropping = config.get('ASHS_TSE_REGION_CROP', ASHSProcessor.get_config_defaults()['ASHS_TSE_REGION_CROP'])
         self.greedy_num_threads = config.get('GREEDY_NUM_THREADS', 0)
+        self.sides = config.get('SIDES', ['left', 'right'])
         self.tm_neck = Timer()
         self.tm_reg_t1_t2_whole = Timer()
         self.tm_reg_t1_temp = Timer()
@@ -396,7 +399,7 @@ class ASHSProcessor:
     def get_config_defaults() -> Dict[str, Any]:
         return { 'ASHS_TSE_REGION_CROP': 0.2 }
 
-    def get_close_to_iso_integer_scaling(self, image : sitk.Image):
+    def _get_close_to_iso_integer_scaling(self, image : sitk.Image):
         """
         Generate a c3d scaling command that will make this image close to isotropic while
         scaling the largest dimension by integer factors. For example, input with spacing
@@ -411,7 +414,43 @@ class ASHSProcessor:
         scaling = np.floor(in_spacing / s_min + 0.5)
         scaling_str = 'x'.join([f'{100*s}' for s in scaling]) + '%'
         return scaling_str
-
+    
+    
+    def _read_target_spacing(self, arg) -> np.ndarray:
+        spc_vec = None
+        if isinstance(arg, (int, float)):
+            return np.array(arg)
+        if isinstance(arg, str):
+            if 'x' in arg:
+                return np.array([float(x) for x in arg.split('x')])
+        raise ValueError(f"Unrecognized format for TARGET_SPACING: {arg}. Must be a single number or a string of the form '0.4x0.4x0.4'.")
+    
+    
+    def _get_upsampling_scaling_command(self, image: sitk.Image) -> str:
+        """
+        Generate a c3d scaling command for upsampling this image to the target spacing. The command
+        depends on the configuration parameters specified for upsampling in the config file. 
+        If target spacing is not specified, a close-to-isotropic integer scaling will be used. 
+        If T1-only mode is used, the T1 image will be upsampled to a fake isotropic spacing specified by T1_ONLY_FAKE_T2_SPACING.
+        """
+        if self.upsampling is False:
+            return ''
+        
+        if self.t1_only:
+            return f'-resample-mm {self.t1_only_fake_t2_spacing}mm'
+        
+        if self.target_spacing == 0.0:
+            # If target spacing is not specified, use the close-to-isotropic integer scaling
+            return f'-resample {self._get_close_to_iso_integer_scaling(image)}'
+        
+        if self.target_spacing.size == 1:
+            return f'-resample-mm {self.target_spacing.item()}mm'
+        
+        if self.target_spacing.size == 3:
+            return f'-resample-mm {"x".join([str(x) for x in self.target_spacing[0]])}mm'
+        
+        raise ValueError(f"Invalid TARGET_SPACING: {self.target_spacing}. Must be a single number or a string of the form '0.4x0.4x0.4'.")
+            
         
     def preprocess(self, exp: ASHSExperimentBase, reg_t1t2_mat:str|None=None, callback: ProgressCallbackType = default_progress_callback, progress_range=(0.0, 0.25)):
         """
@@ -486,35 +525,38 @@ class ASHSProcessor:
 
                 # 1. rigid
                 g.execute(f'-threads {nt} -a -dof 6 -m NCC 2x2x2 '
-                        f"-i template_3tt1 trim_t1_image "
-                        f"-o rigid -n 400x0x0x0 "
-                        f"-ia-image-centers -search 400 5 5", 
-                        template_3tt1=rescale_intensity_to_short(tpe.template_3tt1.data), 
-                        trim_t1_image=gpe.t1_neck_trim.data, rigid=None)
+                          f"-i template_3tt1 trim_t1_image "
+                          f"-o rigid -n 400x0x0x0 "
+                          f"-ia-image-centers -search 400 5 5", 
+                          template_3tt1=rescale_intensity_to_short(tpe.template_3tt1.data), 
+                          trim_t1_image=gpe.t1_neck_trim.data, rigid=None)
                 
                 # 2. affine
                 g.execute(f'-threads {nt} -a -m NCC 2x2x2 '
-                        f'-i template_3tt1 trim_t1_image '
-                        f'-o {gpe.fn_template_to_3tt1_affine_matrix} -n 400x80x40x0 '
-                        f'-ia rigid')
+                          f'-i template_3tt1 trim_t1_image '
+                          f'-o {gpe.fn_template_to_3tt1_affine_matrix} -n 400x80x40x0 '
+                          f'-ia rigid')
                 
                 # 3. deformable
                 g.execute(f'-threads {nt} -m NCC 2x2x2 -e 0.5 -n 60x20x0 -sv '
-                        f'-i template_3tt1 trim_t1_image -it {gpe.fn_template_to_3tt1_affine_matrix} '
-                        f'-o warpfwd -oinv warpinv', 
-                        warpfwd=None, warpinv=None)
+                          f'-i template_3tt1 trim_t1_image -it {gpe.fn_template_to_3tt1_affine_matrix} '
+                          f'-o warpfwd -oinv warpinv', 
+                          warpfwd=None, warpinv=None)
                 
                 # 4. apply
-                g.execute(f"-threads {nt} -rf trim_t1_image "
-                        f"-rm template_3tt1 template_to_3tt1 "
-                        f"-rm temp_roi_left t1_roi_left "
-                        f"-rm temp_roi_right t1_roi_right "
-                        f"-r {gpe.fn_template_to_3tt1_affine_matrix},-1 warpinv", 
-                        template_to_3tt1=None, temp_roi_left=tpe.template_roi['left'].data, temp_roi_right=tpe.template_roi['right'].data, 
-                        t1_roi_left=None, t1_roi_right=None)
+                side_cmd = ' '.join([f'-rm temp_roi_{side} t1_roi_{side}' for side in self.sides])
+                side_kwargs = {}
+                for side in self.sides:
+                    side_kwargs[f'temp_roi_{side}'] = tpe.template_roi[side].data
+                    side_kwargs[f't1_roi_{side}'] = None
+                
+                print(side_kwargs)
+                g.execute(f"-threads {nt} -rf trim_t1_image -rm template_3tt1 template_to_3tt1 {side_cmd} "
+                          f"-r {gpe.fn_template_to_3tt1_affine_matrix},-1 warpinv", 
+                          template_to_3tt1=None, **side_kwargs)
                 
                 # Read off the ROI images
-                t1_roi = { 'left': g['t1_roi_left'], 'right': g['t1_roi_right'] }
+                t1_roi = { side: g[f't1_roi_{side}'] for side in self.sides }
 
                 if self.save_intermediates:
                     gpe.template_to_3tt1.data = g['template_to_3tt1']
@@ -524,22 +566,21 @@ class ASHSProcessor:
             # ------- Perform the cropping based on the ROIs  ------- 
             with self.tm_reg_t1_t2_local:
                 
+                # Determine the target spacing for the T2 upsampling (replace the largest spacing with the second largest one)
+                upsample_cmd = self._get_upsampling_scaling_command(gpe.t2_whole_img.data)
                 if not self.t1_only:
                 
                     # Pad the T2 image with world alignment
                     t2_padded_img = pad_image_with_world_alignment_in_memory(gpe.t2_whole_img.data, [40, 40, 40], [40, 40, 40])
                     
                     for side_, lp in lpe.items():
-                                                
-                        # Determine the target spacing for the T2 upsampling (replace the largest spacing with the second largest one)
-                        scaling_str = self.get_close_to_iso_integer_scaling(gpe.t2_whole_img.data)
-                                        
+                                                                        
                         # Crop the T2 using the T1 ROI and apply the new spacing
                         c3d = Convert3D()
                         c3d.push(t2_padded_img)
                         c3d.push(t1_roi[side_])
                         c3d.execute(f'-popas ROI_T1 -as T2 -push ROI_T1 -reslice-matrix {gpe.fn_save_mat_path_t2_to_t1_global} -trim 5mm '
-                                    f'-resample {scaling_str} -as ROI_T2 -dup -push T2 -reslice-identity -swapdim RPI')
+                                    f'{upsample_cmd} -as ROI_T2 -dup -push T2 -reslice-identity -swapdim RPI')
                         lp.t2_patch_hyperres.data = c3d.peek(-1)
                         roi_t2 = c3d.peek(-2)
 
@@ -566,7 +607,7 @@ class ASHSProcessor:
                         c3d = Convert3D()
                         c3d.push(t1_roi[side_])
                         c3d.push(gpe.t1_neck_trim.data)
-                        c3d.execute(f'-popas T1 -trim 5mm -resample-mm {self.t1_only_fake_t2_spacing}mm '
+                        c3d.execute(f'-popas T1 -trim 5mm {upsample_cmd} '
                                     f'-swapdim RPI -scale 0 -as T2 -dup -push T1 -reslice-identity')
                         lp.t2_patch_hyperres.data = c3d.peek(-2)
                         lp.t1_patch_warped_hyperres.data = c3d.peek(-1)
@@ -630,8 +671,8 @@ class ASHSProcessor:
                     lp.inr_primary_mask.data = c3d.peek(-1)
                     
                     # Upsample this image to near-isotropic spacing (this is the INR 'ground truth'?)
-                    scale_cmd = self.get_close_to_iso_integer_scaling(lp.inr_primary.data)
-                    c3d.execute(f'-clear -push T2P -int 1 -resample {scale_cmd} -as T2GT')
+                    upsample_cmd = self._get_upsampling_scaling_command(gpe.t2_whole_img.data)
+                    c3d.execute(f'-clear -push T2P -int 1 {upsample_cmd} -as T2GT')
                     lp.inr_primary_gt.data = c3d.peek(-1)
                     
                     # Write out the segmentation and dummy mask

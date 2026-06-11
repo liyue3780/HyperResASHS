@@ -31,6 +31,7 @@ class HyperASHSInference():
         self.nnunet_trid = f"{self.trainer}__nnUNetPlans__3d_fullres"
         self.nnunet_model = join(self.config.get('ATLAS_PATH'), self.nnunet_trid)
         self.dataset_json_path = join(self.nnunet_model, 'dataset.json')
+        self.sides = config.get('SIDES', ['left', 'right'])
        
         # Number of threads for Greedy
         self.greedy_num_threads = config.get('GREEDY_NUM_THREADS', 0)
@@ -71,7 +72,8 @@ class HyperASHSInference():
         t1_only = tse is None
         
         # Create the ASHS experiment representation
-        exp = ASHSExperimentBase(self.config, case_path, self.nm, subject=subject, date=date, 
+        print(f'sides: {self.sides}')
+        exp = ASHSExperimentBase(self.config, case_path, self.nm, subject=subject, date=date, sides=self.sides,
                                  prefix=f'{subject}_{date}_' if (subject and date) else f'{subject}_' if subject else '')
 
         # Create a preprocessing/registration worker

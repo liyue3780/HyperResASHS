@@ -82,40 +82,6 @@ Original ASHS command line help message for reference:
 		                    and will be forwarded to the script
 """
 
-_ashs_naming_scheme = """
-# ------- input -------
-# input image names
-t1_native_img: "mprage.nii.gz"
-t2_native_img: "tse.nii.gz"
-
-# input template names
-template: "template.nii.gz"
-left_roi_file: "left_round_in_global_space_larger.nii.gz"
-right_roi_file: "right_round_in_global_space_larger.nii.gz"
-
-# ------- output -------
-# registration intermediate
-t1_name_after_triming_neck: "mprage_necktrim.nii.gz"
-affine_matrix: "t1_to_template_affine_inv.mat"
-t1_whole_img: "mprage_to_tse_warped.nii.gz"
-t2_padded_img: "tse_padded.nii.gz"
-
-# registration output
-template_to_3tt1: "template_to_mprage_warped.nii.gz"
-global_roi_in_3tt1_XYZ: "template_roi_XYZ_to_mprage_warped.nii.gz"
-
-# preprocessing
-inr_primary: "primary.nii.gz"
-inr_secondary: "secondary.nii.gz"
-inr_seg: "primary_seg.nii.gz"
-seg: "input_primary_seg.nii.gz"
-hyper_primary: "hyper_primary.nii.gz"
-hyper_secondary: "hyper_secondary.nii.gz"
-reg_mat: "auxiluary_to_primary.mat"
-hyper_secondary_after_registertion: "auxiluary_to_primary_registered.nii.gz"
-hyper_primary_seg: "inr_hyper_primary_seg.nii.gz"
-"""
-
 
 def main():
     
@@ -140,11 +106,11 @@ def main():
     # Run segmentation subcommand
     run_parser = subparsers.add_parser('run', help='Run HyperResASHS segmentation pipeline')
     run_parser.add_argument('-a', '--atlas', type=str, required=True, 
-                           help='Name of the atlas to use or path to atlas config file')
+                            help='Name of the atlas to use or path to atlas config file')
     run_parser.add_argument('-g', '--t1', type=str, required=True, 
-                           help='Path to T1-weighted image')
+                            help='Path to T1-weighted image')
     run_parser.add_argument('-f', '--t2', type=str, 
-                           help='Path to T2-weighted image. Omit to run in T1-only ASHS mode.')
+                            help='Path to T2-weighted image. Omit to run in T1-only ASHS mode.')
     run_parser.add_argument('-I', '--subject-id', type=str, default=None,
                             help='Subject ID for this experiment. If specified, outputs will be prefixed with the subject ID.')
     run_parser.add_argument('--reg-t1t2', type=str, default=None,
@@ -180,7 +146,8 @@ def main():
                                 1: Preprocessing (neck trim, registration, patch extraction)
                                 2: INR training
                                 3: nnU-Net preparation (resampling, cropping, and formatting for nnU-Net)
-                                4: nnU-Net training                                
+                                4: nnU-Net training        
+                                5: Finalize                        
                               ''')
     train_parser.add_argument('-F', '--filter', type=str, metavar='REGEX' ,default=None,
                               help='''Restrict execution to image(s) that match specified regular expression. 
@@ -390,6 +357,9 @@ def _setup_config(atlas_config : Dict[str,Any], args: argparse.Namespace, atlas_
     config_src['GREEDY_NUM_THREADS'] = args.threads
     config_src['NNUNET_NUM_THREADS'] = args.threads
     config_src['FILE_NAME_CONFIG'] = os.path.join(args.workdir, 'config', 'ashs_filename_scheme.yaml')
+    
+    # Add sides to the config for training if not already present
+    config_src['SIDES'] = config_src.get('SIDES', ['left', 'right'])
     
     # Write the config to the working directory
     os.makedirs(os.path.join(args.workdir, 'config'), exist_ok=True)

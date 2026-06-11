@@ -219,12 +219,41 @@ metadata:
   name: 'My Custom Atlas'
   version: '1.0.0'
 config:
-  EXP_NUM: 401                    # Unique experiment number
-  MODEL_NAME: 'IsotropicSeg'      # Model name
-  TRAINER: 'ModAugUNetTrainer'    # nnU-Net trainer class
-  CONDITION: 'in_vivo'            # Condition identifier
+  EXP_NUM: 401                                  # Unique experiment number
+  MODEL_NAME: 'IsotropicSeg'                    # Model name
+  TRAINER: 'ModAugPartialCoverageUNetTrainer'   # nnU-Net trainer class
+  CONDITION: 'in_vivo'                          # Condition identifier
   UPSAMPLING_METHOD: 'INRUpsampling'
+  SIDES:
+    - left
+    - right
 ```
+
+The following parameters are included in the `config`:
+
+`EXP_NUM`:
+A unique numeric key for this experiment. 
+
+`TRAINER`:
+Name of the nnU-Net class used for training. This is important at it determines the **type of augmentation used**. `ModAugUNetTrainer` is the trainer with modality augmentation (modalities are occasionally excluded during training to force the model to learn from all available modalities). `ModAugPartialCoverageUNetTrainer` offers modality augmentation plus augmentation for partial coverage that may be more robust for slab TSE images. Other trainers provided by nnU-Net or included in the `hyperresashs/submodules/nnUNet/nnunetv2/training/nnUNetTrainer/variants/data_augmentation` folder can also be specified.
+
+`UPSAMPLING_METHOD`: 
+How images and segmentations are upsampled during training. `INRUpsampling` uses implicit neural representation to upsample the segmentations to isotropic or nearly isotropic resolution during training. This is recommended for highly anisotropic TSE scans and manual segmentations. Other options are `None` for no upsampling and `GreedyUpsampling` for faster upsampling based on Gaussian smoothing and voting (not recommended).
+
+`TARGET_SPACING`:
+Specifies the resolution to which images should be upsampled when using `INRUpsampling`. By default (value `0.0`), resolution is determined based on the TSE image, making the image isotropic or nearly isotropic. For example, image with `0.4x0.5x2.0` resolution would be upsampled to `0.4x0.5x0.4`. You can also specify a target resolution here, either as a vector `0.4x0.4x0.4` or as the desired dimension `0.4`. 
+
+`SIDES`: 
+When left and right target structures are segmented using separately trained nnU-Net networks (e.g., medial temporal lobe), this should be a list containing `left`, `right`. For structures that do not separate by hemisphere (e.g., brainstem), this can be `mid`. 
+
+`MODEL_NAME`:
+Name of the model used for the segmentation. Currently only `IsotropicSeg` is supported.
+
+`CONDITION`:
+Should be `in_vivo`
+
+
+
 
 ### Manifest File Format (`-m`)
 

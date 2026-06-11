@@ -29,7 +29,7 @@ from tqdm import tqdm
 from sklearn.model_selection import KFold
 from . import __version__
 
-def process_manifest(manifest_csv: str) -> pd.DataFrame:
+def process_manifest(manifest_csv: str, sides: List[str]) -> pd.DataFrame:
     """
     Validate the manifest CSV file for training preprocessing, replacing 
     relative paths with absolute paths, and return a DataFrame.
@@ -49,9 +49,10 @@ def process_manifest(manifest_csv: str) -> pd.DataFrame:
         - 'seg_left': Path to the left hemisphere segmentation for the case
         - 'seg_right': Path to the right hemisphere segmentation for the case
     """
-    required_columns = {'id', 'tse', 'mprage', 'seg_left', 'seg_right'}
+    image_columns = ['tse', 'mprage'] + [f'seg_{side}' for side in sides]
+    required_columns = set(['id'] + image_columns)
     
-    df = pd.read_csv(manifest_csv)
+    df = pd.read_csv(manifest_csv, dtype=str)
     
     # Check for required columns
     if not required_columns.issubset(df.columns):
@@ -73,7 +74,7 @@ def process_manifest(manifest_csv: str) -> pd.DataFrame:
             raise FileNotFoundError(f"File specified in manifest .csv does not exist': {path}")
         return path
         
-    for col in ['tse', 'mprage', 'seg_left', 'seg_right']:
+    for col in image_columns:
         df[col] = df[col].apply(fix_filename)
         
     # Set the index
@@ -131,6 +132,7 @@ class HyperASHSTraining:
                  output_dir: str, 
                  overwrite_existing=False, save_intermediates=False, create_links=True):
         self.config = config.copy()
+        self.sides = config.get('SIDES', ['left', 'right'])
         self.manifest_file = manifest_file
         self.output_dir = output_dir
         self.stats_dir = join(output_dir, 'final', 'stats')
@@ -154,7 +156,7 @@ class HyperASHSTraining:
             self.nm = SimpleNamespace(**settings)
             
         # Load the manifest file and validate it, replacing relative paths with absolute paths
-        self.df = process_manifest(manifest_file)
+        self.df = process_manifest(manifest_file, self.sides)
 
         # Define top-level folders for preprocessed data and INR training data
         self.dir_preproc = join(output_dir, 'preproc')
@@ -188,17 +190,18 @@ class HyperASHSTraining:
             
             # Create a folder in the output directory for this case
             case_path = join(self.dir_preproc, subject, date)
-            inr_path_map = {side: join(self.dir_inr_training, f'{subject}_{date}_{side}') for side in ['left', 'right']}
+            inr_path_map = {side: join(self.dir_inr_training, f'{subject}_{date}_{side}') for side in self.sides }
             os.makedirs(case_path, exist_ok=True)
             
             # Create the ASHS experiment representation
             self.d_exp[(subject,date)] = ASHSExperimentBase(self.config, case_path, self.nm, 
                                                             subject=subject, date=date, 
                                                             inr_path=inr_path_map,
-                                                            nnunet_train_id={'left': i*2, 'right': i*2+1})
+                                                            sides=self.sides,
+                                                            nnunet_train_id={ side: i*len(self.sides) + j for j, side in enumerate(self.sides) })
             
             # Also store the experiments by side for easy access during INR training
-            for side in ['left', 'right']:
+            for side in self.sides:
                 self.d_exp_by_side[(subject, date, side)] = self.d_exp[(subject,date)]
             
         
@@ -284,10 +287,7 @@ class HyperASHSTraining:
             print('=' * 40)
 
             # Link or copy the input files to the working directory folder
-            for col, dest in [('mprage', exp.gpe.t1_native), 
-                              ('tse', exp.gpe.t2_whole_img),
-                              ('seg_left', exp.lpe['left'].input_seg),
-                              ('seg_right', exp.lpe['right'].input_seg)]:
+            for col, dest in [('mprage', exp.gpe.t1_native), ('tse', exp.gpe.t2_whole_img)] + [(f'seg_{side}', exp.lpe[side].input_seg) for side in self.sides]:
                 copy_or_link_file(self.df.loc[(subject, date), col], dest.filename, 
                                   create_links=self.create_links, force_overwrite=self.overwrite_existing, 
                                   relative_links=False)
@@ -342,7 +342,11 @@ class HyperASHSTraining:
             config["TRAINING"]["SEED"] = random_seed
         
         # Run INR for each subject
-        d_filter = dict(self._filter_cases_by_side(filter))           
+        d_filter = dict(self._filter_cases_by_side(filter))
+        if(len(d_filter) == 0):
+            print(f'No cases found matching filter "{filter}". Skipping INR training.')
+            return
+        
         for i, ((subject, date, side), exp) in enumerate(d_filter.items()):
             case_id = f'{subject}_{date}_{side}'
             lp = exp.lpe[side]
@@ -439,13 +443,13 @@ class HyperASHSTraining:
                 n_failed += 1
                 continue
             
-            # Check that the dice coefficient is above a reasonable threshold (e.g., 0.95)
+            # Check that the dice coefficient is above a reasonable threshold (e.g., 0.9)
             with open(ovl_file, 'r') as f:
                 ovl_data = json.load(f)
                 total_dice = ovl_data.get('total_dice', 0)
-                if total_dice < 0.95:
+                if total_dice < 0.9:
                     print(f'INR upsampling does not match input segmentation for case {case_id}: {total_dice:.4f}. '
-                          f'Try rerunning stage 2 (-s 2) for this case (-F {case_id}) with a different random seed (-R).')
+                          f'Try rerunning stage 2 (-s 2) for this case (-F {case_id.replace("_nodate_","_")}) with a different random seed (-R).')
                     n_failed += 1
                     
         if n_failed == 0:
@@ -751,8 +755,8 @@ class HyperASHSTraining:
         # Ensure relevant config keys for inference are in the metadata, while the other fields
         # that are only relevant for training (e.g., local directories) are not includes
         full_metadata['config'] = {
-            key: self.config[key] for key in ['EXP_NUM', 'MODEL_NAME', 'UPSAMPLING_METHOD', 
-                                              'TRAINER', 'CONDITION', 'ASHS_TSE_REGION_CROP']
+            key: self.config[key] for key in ['EXP_NUM', 'MODEL_NAME', 'UPSAMPLING_METHOD', 'TARGET_SPACING',
+                                              'TRAINER', 'CONDITION', 'ASHS_TSE_REGION_CROP', 'SIDES']
         }
             
         # Write the software version information to the metadata
