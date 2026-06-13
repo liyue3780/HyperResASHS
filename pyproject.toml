@@ -1,6 +1,6 @@
 [project]
 name="hyperresashs"
-version="1.0.5"
+version="1.0.8"
 requires-python = ">=3.10"
 description="Isotropic segmentation pipeline for MTL subregions from multi-modality 3T MRI"
 readme="README.md"

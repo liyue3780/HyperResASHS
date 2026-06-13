@@ -2,6 +2,7 @@ import os
 from os.path import join
 from .ashs_exp import ASHSExperimentBase
 from .ashs_preproc import ASHSProcessor, generate_ashs_segmentation_qc, ProgressCallbackType, default_progress_callback, Timer, SegmentationLabelMap
+from .ashs_cleanup import ashs_cleanup
 from .utils.tool import copy_or_link_file, nnunet_configure_device
 import yaml
 from types import SimpleNamespace
@@ -14,8 +15,9 @@ import pandas as pd
 import SimpleITK as sitk
 
 class HyperASHSInference():
-    def __init__(self, config):
+    def __init__(self, config, cleanup_config=None):
         self.config = config
+        self.cleanup_config = cleanup_config
 
         with open(config['FILE_NAME_CONFIG']) as f:
             settings = yaml.safe_load(f)
@@ -29,6 +31,7 @@ class HyperASHSInference():
         self.nnunet_trid = f"{self.trainer}__nnUNetPlans__3d_fullres"
         self.nnunet_model = join(self.config.get('ATLAS_PATH'), self.nnunet_trid)
         self.dataset_json_path = join(self.nnunet_model, 'dataset.json')
+        self.sides = config.get('SIDES', ['left', 'right'])
        
         # Number of threads for Greedy
         self.greedy_num_threads = config.get('GREEDY_NUM_THREADS', 0)
@@ -60,7 +63,7 @@ class HyperASHSInference():
     def run_inference_for_one_case(self, mprage:str, tse:str|None, case_path:str, 
                                    subject:str|None=None, date:str|None=None,
                                    save_intermediates: bool = True, overwrite_existing: bool = False,
-                                   create_links: bool = True,
+                                   create_links: bool = True, reg_t1t2_mat:str|None=None,
                                    callback: ProgressCallbackType = default_progress_callback, 
                                    device:str = 'auto'):
         
@@ -69,7 +72,8 @@ class HyperASHSInference():
         t1_only = tse is None
         
         # Create the ASHS experiment representation
-        exp = ASHSExperimentBase(self.config, case_path, self.nm, subject=subject, date=date, 
+        print(f'sides: {self.sides}')
+        exp = ASHSExperimentBase(self.config, case_path, self.nm, subject=subject, date=date, sides=self.sides,
                                  prefix=f'{subject}_{date}_' if (subject and date) else f'{subject}_' if subject else '')
 
         # Create a preprocessing/registration worker
@@ -89,7 +93,7 @@ class HyperASHSInference():
             
             # Execute the registration and preprocessing steps (neck trimming, global and local registration, ROI cropping)
             print('--- HyperResASHS Stage 1: Neck Trim and Registration ---')
-            reg.preprocess(exp, callback=callback, progress_range=(0.0, 0.25))
+            reg.preprocess(exp, reg_t1t2_mat=reg_t1t2_mat, callback=callback, progress_range=(0.0, 0.25))
 
             # ------- nnunet inference -------
             with tm_nnunet:
@@ -158,15 +162,18 @@ class HyperASHSInference():
                     elapsed_time = end - start
                     with open(join(lp.dir_nnunet_output, "elapsed_time.txt"), "w") as f_:
                         f_.write(str(elapsed_time))
-                        
-                    # Copy the nnUNet output segmentation to the final segmentation location
-                    # (links are a bad idea because user might want to delete the nnUNet output folder)
-                    copy_or_link_file(lp.nnunet_seg.filename, lp.t2_seg_hyperres.filename, 
-                                      create_links=False, force_overwrite=True, create_dir=True)
+    
+                    # Generate the final segmentation for this side, with optional cleanup                    
+                    if self.cleanup_config is not None:
+                        # Apply the optional cleanup step to the nnUNet segmentation output
+                        lp.t2_seg_hyperres.data = ashs_cleanup(self.cleanup_config, lp.nnunet_seg.data)
+                    else:                        
+                        # Copy the nnUNet output segmentation to the final segmentation location
+                        lp.t2_seg_hyperres.data = lp.nnunet_seg.data
                         
                     # Generate a QC screenshot for the nnUNet output
                     generate_ashs_segmentation_qc(
-                        seg = lp.nnunet_seg.data,
+                        seg = lp.t2_seg_hyperres.data,
                         t1 = lp.t1_patch_warped_hyperres.data,
                         t2 = lp.t2_patch_hyperres.data,
                         labelset = self.labelset,

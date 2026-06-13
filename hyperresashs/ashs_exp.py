@@ -169,9 +169,9 @@ class GlobalPipelineElements:
     
 
 class TemplatePipelineElements:
-    def __init__(self, template_path:str, nm: SimpleNamespace):
+    def __init__(self, template_path:str, nm: SimpleNamespace, sides):
         self.template_3tt1 = LazyImage(join(template_path, nm.template_img))
-        self.template_roi = { side : LazyImage(join(template_path, nm.template_roi_img.format(side=side))) for side in ['left', 'right'] }
+        self.template_roi = { side : LazyImage(join(template_path, nm.template_roi_img.format(side=side))) for side in sides }
 
 
 class LocalPipelineElements:
@@ -243,5 +243,5 @@ class ASHSExperimentBase:
                                                  inr_path=inr_path[side] if inr_path is not None else None,
                                                  nnunet_train_id=nnunet_train_id[side] if nnunet_train_id is not None else None) 
                     for side in sides }
-        self.tpe = TemplatePipelineElements(config['TEMPLATE_PATH'], nm)
+        self.tpe = TemplatePipelineElements(config['TEMPLATE_PATH'], nm, sides=sides)
 
