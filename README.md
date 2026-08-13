@@ -1,17 +1,47 @@
 # HyperResASHS
 
-[![arXiv](https://img.shields.io/badge/arXiv-2508.17171-b31b1b.svg)](https://doi.org/10.48550/arXiv.2508.17171)
+[![arXiv (One-Stage)](https://img.shields.io/badge/arXiv%20(One--Stage)-2508.17171-b31b1b.svg)](https://doi.org/10.48550/arXiv.2508.17171)
+**MICCAI OFF-GRID (Two-Stage), 2026** *(link coming soon)*
 
-**HyperResASHS** is a deep learning pipeline for isotropic segmentation of medial temporal lobe (MTL) subregions from multi-modality 3T MRI (T1w and T2w). This repository implements the method described in our paper for achieving high-resolution, isotropic segmentation of brain structures.
+> This branch contains the code for our recently accepted paper **"From Histology to *in vivo* MRI: An Implicit Neural Representation Framework for Medial Temporal Lobe Subregion Segmentation"**, presented at the MICCAI Workshop **OFF-GRID: 1st Workshop on Continuous Representations and Grid-Free Methods in Medical Imaging**.
+
+**HyperResASHS** is a deep learning pipeline for isotropic segmentation of medial temporal lobe (MTL) subregions from multi-modality 3T MRI (T1w and T2w). Building on the original one-stage method, this repository implements a **two-stage, coarse-to-fine model** for segmenting histology-defined, fine-grained subregions at high isotropic resolution.
 
 ## Overview
 
-This project addresses the challenge of segmenting MTL subregions from anisotropic MRI data by:
+The original **one-stage model** (see the `main` branch) addresses the challenge of segmenting MTL subregions from anisotropic MRI data by:
 1. Building an isotropic atlas using Implicit Neural Representations (INR)
 2. Training a multi-modality segmentation model with nnU-Net
 3. Performing inference on test data with automatic preprocessing
 
+This branch extends the one-stage model into a **two-stage model** for the segmentation of histology-defined, fine-grained subregions. Because these subregions are much smaller, segmenting them directly often leads to detection failures and inaccurate boundaries. The two-stage model therefore decomposes the task into two cascaded stages:
+
+1. **Stage 1:** Segment the coarse subregions, in the same way as the one-stage model.
+2. **Stage 2:** Segment the fine-grained, smaller subregions, guided by the coarse segmentation priors produced in Stage 1.
+
 The pipeline handles the entire workflow from raw multi-modality MRI images to final segmentation results, including registration, ROI extraction, upsampling, and model inference.
+
+## Running the Two-Stage Pipeline
+
+The one-stage model is currently being revised according to our paper revision, and the latest updates may not yet be included in the `pip`-installable `hyperresashs` package. However, the full pipeline can still be run directly via the `main.py` script with the appropriate stage arguments.
+
+The **two-stage model is only available through `main.py`** (not via the `hrashs` CLI), for example:
+
+```bash
+python main.py -c <config> -s <stage>
+```
+
+The main updates introduced for the two-stage segmentation pipeline are:
+
+- **Grouping rule in the YAML config:** The snap label file entry in the YAML file is replaced with the grouping rule between coarse and fine-grained subregions (see Table 1 in the manuscript).
+- **New `img_env` argument:** For two-stage segmentation, this should be set to `ex_vivo`.
+- **New `nnunet_plan_exvivo` stage:** Added to `main.py`; it processes the `dataset.json` file for both stage one and stage two.
+- **New `auxiliary` argument:** For stage-two inference, an auxiliary experiment is required to provide the coarse segmentation model.
+
+The core implementation of the two-stage pipeline can be found in:
+
+- The `PreprocessorExVivo` class in [`hyperresashs/preprocessing.py`](hyperresashs/preprocessing.py)
+- The `TwoStageTester` class in [`hyperresashs/testing.py`](hyperresashs/testing.py)
 
 ## Requirements
 * **NVidia GPU** is needed to run training and inference. It is possible to run inference on CPU but runtimes will be over an hour per case, vs. ~3 minutes on GPU.
