@@ -11,3 +11,9 @@ TEMPLATE_PATH: '/home/liyue7/data/Data/D14_3T_Mix_7T/Clinical_Exp/Rerun/template
 
 # model download
 HF_MODEL_REPO: 'liyue3780/Dataset292_IsotropicSeg'  # replace YOUR_USERNAME with your actual Hugging Face username
+
+# file names config
+FILE_NAME_CONFIG: 'HyperResASHS/config_test/global_0000_filenames.yaml'
+
+# registration method
+REGISTRATION_METHOD: 'greedy'  # options: ANTs, greedy

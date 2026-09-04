@@ -181,6 +181,8 @@ hrashs run -a HSG_Body_Atlas -g mprage.nii.gz -f tse.nii.gz -I sub01 -w ./output
 
 **QC Images:** Registration and segmentation QC images in .png format are placed in the `qc` subfolder of the output directory. 
 
+**Registration Method:** Before the images are input into the segmentation model, the T1w and T2w images need to be registered at both the whole-brain level and the MTL level. The default registration method is [greedy](https://sites.google.com/view/greedyreg/documentation). The classical registration tool [ANTs](https://github.com/ANTsX/ANTs) is also available for these registration steps. To switch to ANTs, the user only needs to change the value of `REGISTRATION_METHOD` in the test config file. (This option is currently available when running the segmentation with the Python code, and is not yet built into the Python package.)
+
 ## Training
 
 Train a custom HyperResASHS model on your own dataset:

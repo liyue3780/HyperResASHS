@@ -12,6 +12,7 @@ import torch
 import time
 import shutil
 import tempfile
+import ants
 
 
 class ModelTester():
@@ -239,14 +240,35 @@ class ModelTester():
             # ------- global registration (from T1 to T2) new added pipeline -------
             t2_whole_img = join(case_path, self.nm.t2_whole_img)
             t1_whole_img_before_registration = join(case_path, self.nm.t1_native_img)
-
-            save_mat_path_t2_to_t1_global = join(case_path, 'global_matrix_3tt2_to_3tt1.mat')
-            g = Greedy3D()
-            g.execute(f'-d 3  -threads 24 -a -m NMI -i {t1_whole_img_before_registration} {t2_whole_img} -dof 6 -o {save_mat_path_t2_to_t1_global} -ia-identity -n 100x50')
-
             t1_registered_path = join(case_path, self.nm.t1_whole_img)
-            g = Greedy3D()
-            g.execute(f'-d 3  -threads 24 -rf {t1_whole_img_before_registration} -rm {t1_whole_img_before_registration} {t1_registered_path} -r {save_mat_path_t2_to_t1_global},-1')
+
+            # using greedy
+            if self.config["REGISTRATION_METHOD"] == "greedy":
+                save_mat_path_t2_to_t1_global = join(case_path, 'global_matrix_3tt2_to_3tt1.mat')
+                g = Greedy3D()
+                g.execute(f'-d 3  -threads 24 -a -m NMI -i {t1_whole_img_before_registration} {t2_whole_img} -dof 6 -o {save_mat_path_t2_to_t1_global} -ia-identity -n 100x50')
+
+                t1_registered_path = join(case_path, self.nm.t1_whole_img)
+                g = Greedy3D()
+                g.execute(f'-d 3  -threads 24 -rf {t1_whole_img_before_registration} -rm {t1_whole_img_before_registration} {t1_registered_path} -r {save_mat_path_t2_to_t1_global},-1')
+
+            # using ANTS
+            elif self.config["REGISTRATION_METHOD"] == "ANTs":
+                t1_ants  = ants.image_read(t1_whole_img_before_registration)
+                t2_ants = ants.image_read(t2_whole_img)
+                reg = ants.registration(fixed=t1_ants, moving=t2_ants, type_of_transform='Rigid')
+                t1_to_t2 = ants.apply_transforms(
+                    fixed=t2_ants,
+                    moving=t1_ants,
+                    transformlist=reg['invtransforms'],
+                    interpolator='linear',
+                )
+                ants.image_write(t1_to_t2, t1_registered_path)
+                print("finish using ANTs to run whole-brain registration")
+
+            else:
+                registration_method = self.config["REGISTRATION_METHOD"]
+                raise ValueError(f"no such registration method {registration_method}")
 
             # ------- extract ROI -------
             self.trim_neck_for_original_3tt1(case_path)
@@ -292,11 +314,25 @@ class ModelTester():
             save_mat_path = os.path.join(side_path, self.nm.reg_mat)
             output_file_path = os.path.join(side_path, self.nm.hyper_secondary_after_registertion)
 
-            g = Greedy3D()
-            g.execute(f"-d 3  -threads 24 -a -m NMI -i {target_file} {moving_file} -dof 6 -o {save_mat_path} -ia-identity -n 100x50")
+            # using greedy
+            if self.config["REGISTRATION_METHOD"] == "greedy":
+                g = Greedy3D()
+                g.execute(f"-d 3  -threads 24 -a -m NMI -i {target_file} {moving_file} -dof 6 -o {save_mat_path} -ia-identity -n 100x50")
 
-            g = Greedy3D()
-            g.execute(f'-d 3  -threads 24 -rf {target_file} -rm {moving_file} {output_file_path} -r {save_mat_path}')
+                g = Greedy3D()
+                g.execute(f'-d 3  -threads 24 -rf {target_file} -rm {moving_file} {output_file_path} -r {save_mat_path}')
+
+            # using ANTs
+            elif self.config["REGISTRATION_METHOD"] == "ANTs":
+                fixed = ants.image_read(target_file)
+                moving = ants.image_read(moving_file)
+                reg = ants.registration(fixed=fixed, moving=moving, type_of_transform='Rigid')
+                ants.image_write(reg['warpedmovout'], output_file_path)
+                print("finish using ANTs to run local registration")
+
+            else:
+                registration_method = self.config["REGISTRATION_METHOD"]
+                raise ValueError(f"no such registration method {registration_method}")
 
             # ------- nnunet input -------
             create_link(target_file, join(nnunet_input_folder, 'MTL_000_0000.nii.gz'))

@@ -14,3 +14,6 @@ HF_MODEL_REPO: ''  # optional: (e.g., "username/Dataset292_IsotropicSeg")
 
 # file names config
 FILE_NAME_CONFIG: ''
+
+# registration method
+REGISTRATION_METHOD: 'greedy'  # options: ANTs, greedy
